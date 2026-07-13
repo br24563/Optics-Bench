@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Optical Bench — interactive ray tracer</title>
+  <link rel="stylesheet" href="style.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <h1>Optical&nbsp;Bench</h1>
+      <p class="tagline">A draggable, physically-real thin-lens &amp; mirror ray tracer — right in the browser.</p>
+    </header>
+
+    <main class="workspace">
+      <div class="canvas-wrap">
+        <canvas id="bench"></canvas>
+        <p class="hint">Drag the yellow source, lenses, or mirrors. Click one to edit it on the right.</p>
+      </div>
+
+      <aside class="panel">
+        <section class="panel-section">
+          <h2>Toolbar</h2>
+          <div class="toolbar">
+            <button id="add-lens">+ Lens</button>
+            <button id="add-mirror">+ Mirror</button>
+            <button id="delete-selected" class="danger">Delete selected</button>
+          </div>
+        </section>
+
+        <section class="panel-section">
+          <h2>Source</h2>
+          <label class="field">
+            Mode
+            <select id="source-mode">
+              <option value="point">Point (diverging fan)</option>
+              <option value="parallel">Parallel (collimated beam)</option>
+            </select>
+          </label>
+          <label class="field">
+            Rays <span class="unit" id="ray-count-val"></span>
+            <input type="range" id="ray-count" min="3" max="41" step="2" value="11" />
+          </label>
+          <label class="field" id="spread-row">
+            Fan spread (°)
+            <input type="range" id="source-spread" min="5" max="180" value="40" />
+          </label>
+          <label class="field" id="width-row" hidden>
+            Beam width (px)
+            <input type="range" id="source-width" min="20" max="400" value="140" />
+          </label>
+          <label class="field">
+            Aim angle (°)
+            <input type="range" id="source-angle" min="-180" max="180" value="0" />
+          </label>
+        </section>
+
+        <section class="panel-section" id="element-controls" hidden>
+          <h2 id="element-title">Selected element</h2>
+          <label class="field">
+            Angle (°)
+            <input type="range" id="el-angle" min="-180" max="180" value="0" />
+          </label>
+          <label class="field" id="focal-row">
+            Focal length (px)
+            <input type="range" id="el-focal" min="-300" max="300" step="5" value="140" />
+          </label>
+          <p class="readout" id="el-readout"></p>
+        </section>
+
+        <details class="panel-section legend">
+          <summary>How the physics works</summary>
+          <p>
+            Each lens uses the classic thin-lens graphical construction:
+            a ray through the optical center is never bent, so every ray
+            parallel to it must refract to cross the same point on the
+            focal plane. That's the only rule driving every bend you see —
+            no lookup tables, no fake bending.
+          </p>
+          <p>
+            Mirrors use plain specular reflection
+            (angle of incidence = angle of reflection). Positive focal
+            length draws a convex (converging) lens; negative draws a
+            concave (diverging) one.
+          </p>
+        </details>
+      </aside>
+    </main>
+
+    <footer class="footer">
+      <span>Built with vanilla HTML/CSS/JS · no build step · <a href="https://github.com/" target="_blank" rel="noopener">source on GitHub</a></span>
+    </footer>
+  </div>
+
+  <script src="src/optics.js"></script>
+  <script src="src/render.js"></script>
+  <script src="src/interaction.js"></script>
+</body>
+</html>
