@@ -1,7 +1,7 @@
 // render.js
 // Everything that touches the canvas 2D context lives here. optics.js knows
-// nothing about pixels; this file knows nothing about ray-tracing math beyond
-// the points it's handed.
+// nothing about pixels; this file knows nothing about ray-tracing rules
+// beyond the points/values it's handed.
 
 const COLORS = {
   bg: '#0b0f14',
@@ -10,11 +10,17 @@ const COLORS = {
   ray: '#ff3b4e',
   rayGlow: 'rgba(255, 59, 78, 0.35)',
   lens: '#8ecbff',
+  lensFill: 'rgba(142, 203, 255, 0.06)',
   mirror: '#e7ecf2',
   mirrorBack: '#0b0f14',
+  prism: '#c9a6ff',
+  prismFill: 'rgba(201, 166, 255, 0.08)',
   source: '#ffd23f',
   selected: '#39ff88',
-  axis: 'rgba(142, 203, 255, 0.25)',
+  axis: 'rgba(142, 203, 255, 0.22)',
+  opticalAxis: 'rgba(255, 210, 63, 0.35)',
+  imageReal: '#39ff88',
+  imageVirtual: 'rgba(57, 255, 136, 0.5)',
 };
 
 const GRID_SPACING = 28;
@@ -48,95 +54,53 @@ function drawBreadboard(ctx, width, height) {
   }
 }
 
-function drawRayPath(ctx, points) {
-  if (points.length < 2) return;
+function drawOpticalAxis(ctx, width, axisY, isSnapping) {
+  ctx.strokeStyle = isSnapping ? COLORS.selected : COLORS.opticalAxis;
+  ctx.lineWidth = isSnapping ? 2 : 1.5;
+  ctx.setLineDash([10, 6]);
+  ctx.beginPath();
+  ctx.moveTo(0, axisY);
+  ctx.lineTo(width, axisY);
+  ctx.stroke();
+  ctx.setLineDash([]);
 
-  // Soft glow pass underneath, then a crisp core line on top. Two strokes
-  // instead of shadowBlur every frame keeps this cheap to redraw.
-  ctx.strokeStyle = COLORS.rayGlow;
+  // Ruler ticks every 50px so drag distances have a visual reference.
+  ctx.strokeStyle = 'rgba(255, 210, 63, 0.25)';
+  ctx.font = '10px "IBM Plex Mono", monospace';
+  ctx.fillStyle = 'rgba(255, 210, 63, 0.45)';
+  for (let x = 0; x < width; x += 50) {
+    ctx.beginPath();
+    ctx.moveTo(x, axisY - 4);
+    ctx.lineTo(x, axisY + 4);
+    ctx.stroke();
+    if (x % 100 === 0) ctx.fillText(String(x), x + 3, axisY - 7);
+  }
+
+  ctx.font = '11px "IBM Plex Mono", monospace';
+  ctx.fillStyle = 'rgba(255, 210, 63, 0.55)';
+  ctx.fillText('optical axis — drag to reposition', 10, axisY - 12);
+}
+
+function drawRayPath(ctx, points, color) {
+  if (points.length < 2) return;
+  const rayColor = color || COLORS.ray;
+
+  ctx.strokeStyle = rayColor;
+  ctx.globalAlpha = 0.28;
   ctx.lineWidth = 5;
   ctx.lineJoin = 'round';
   ctx.beginPath();
   ctx.moveTo(points[0].x, points[0].y);
   for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
   ctx.stroke();
+  ctx.globalAlpha = 1;
 
-  ctx.strokeStyle = COLORS.ray;
+  ctx.strokeStyle = rayColor;
   ctx.lineWidth = 1.5;
   ctx.beginPath();
   ctx.moveTo(points[0].x, points[0].y);
   for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
   ctx.stroke();
-}
-
-function drawLens(ctx, lens, isSelected) {
-  const { a, b } = Optics.elementEndpoints(lens);
-  const converging = lens.focalLength > 0;
-  const axis = Optics.fromAngle(lens.angle);
-  // Bulge direction: outward on both sides for a symmetric bi-convex/bi-concave look.
-  const bulge = converging ? 10 : -8;
-
-  ctx.strokeStyle = isSelected ? COLORS.selected : COLORS.lens;
-  ctx.lineWidth = 3;
-  ctx.beginPath();
-  ctx.moveTo(a.x, a.y);
-  ctx.quadraticCurveTo(
-    lens.center.x + axis.x * bulge, lens.center.y + axis.y * bulge,
-    b.x, b.y
-  );
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.moveTo(a.x, a.y);
-  ctx.quadraticCurveTo(
-    lens.center.x - axis.x * bulge, lens.center.y - axis.y * bulge,
-    b.x, b.y
-  );
-  ctx.stroke();
-
-  // Local optical axis, drawn faint, so you can see what "angle" means for this element.
-  drawAxisLine(ctx, lens);
-  drawFocalTicks(ctx, lens);
-
-  drawLabel(ctx, lens.center, axis, `f = ${lens.focalLength > 0 ? '+' : ''}${lens.focalLength}px`);
-}
-
-function drawFocalTicks(ctx, lens) {
-  const axis = Optics.fromAngle(lens.angle);
-  const f = Math.abs(lens.focalLength);
-  for (const sign of [1, -1]) {
-    const p = Optics.add(lens.center, Optics.scale(axis, sign * f));
-    ctx.strokeStyle = COLORS.axis;
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(p.x - 5, p.y - 5);
-    ctx.lineTo(p.x + 5, p.y + 5);
-    ctx.moveTo(p.x - 5, p.y + 5);
-    ctx.lineTo(p.x + 5, p.y - 5);
-    ctx.stroke();
-  }
-}
-
-function drawMirror(ctx, mirror, isSelected) {
-  const { a, b } = Optics.elementEndpoints(mirror);
-  const axis = Optics.fromAngle(mirror.angle);
-
-  // Backing (the "silvered" non-reflective side) drawn as a short hatch.
-  ctx.strokeStyle = COLORS.mirrorBack;
-  ctx.lineWidth = 6;
-  ctx.beginPath();
-  ctx.moveTo(a.x - axis.x * 3, a.y - axis.y * 3);
-  ctx.lineTo(b.x - axis.x * 3, b.y - axis.y * 3);
-  ctx.stroke();
-
-  ctx.strokeStyle = isSelected ? COLORS.selected : COLORS.mirror;
-  ctx.lineWidth = 3;
-  ctx.beginPath();
-  ctx.moveTo(a.x, a.y);
-  ctx.lineTo(b.x, b.y);
-  ctx.stroke();
-
-  drawAxisLine(ctx, mirror);
-  drawLabel(ctx, mirror.center, axis, 'mirror');
 }
 
 function drawAxisLine(ctx, el) {
@@ -153,35 +117,195 @@ function drawAxisLine(ctx, el) {
   ctx.setLineDash([]);
 }
 
-function drawLabel(ctx, center, axis, text) {
+function drawLabel(ctx, center, axis, text, dy) {
   const offset = { x: -axis.y, y: axis.x };
-  const p = Optics.add(center, Optics.scale(offset, 26));
+  const p = Optics.add(center, Optics.scale(offset, dy || 26));
   ctx.font = '11px "IBM Plex Mono", monospace';
   ctx.fillStyle = 'rgba(230, 238, 246, 0.7)';
   ctx.textAlign = 'center';
   ctx.fillText(text, p.x, p.y);
 }
 
+// ---------- lens ----------
+
+function drawLens(ctx, lens, isSelected) {
+  if (lens.model === 'realistic') drawRealisticLens(ctx, lens, isSelected);
+  else drawIdealLens(ctx, lens, isSelected);
+
+  drawAxisLine(ctx, lens);
+  const modelLabel = lens.model === 'realistic' ? 'Snell\u2019s law' : 'ideal thin lens';
+  drawLabel(ctx, lens.center, Optics.fromAngle(lens.angle), modelLabel, 26);
+}
+
+function drawIdealLens(ctx, lens, isSelected) {
+  const { a, b } = Optics.elementEndpoints(lens);
+  const converging = lens.focalLength > 0;
+  const axis = Optics.fromAngle(lens.angle);
+  const bulge = converging ? 10 : -8;
+
+  ctx.strokeStyle = isSelected ? COLORS.selected : COLORS.lens;
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(a.x, a.y);
+  ctx.quadraticCurveTo(lens.center.x + axis.x * bulge, lens.center.y + axis.y * bulge, b.x, b.y);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(a.x, a.y);
+  ctx.quadraticCurveTo(lens.center.x - axis.x * bulge, lens.center.y - axis.y * bulge, b.x, b.y);
+  ctx.stroke();
+
+  drawFocalTicks(ctx, lens.center, axis, Math.abs(lens.focalLength));
+  drawLabel(ctx, lens.center, axis, `f = ${lens.focalLength > 0 ? '+' : ''}${Math.round(lens.focalLength)}px`, -18);
+}
+
+function drawRealisticLens(ctx, lens, isSelected) {
+  const s = Optics.buildLensSurfaces(lens);
+  const tangent = { x: -s.axis.y, y: s.axis.x };
+  const halfHeight = lens.height / 2;
+
+  ctx.strokeStyle = isSelected ? COLORS.selected : COLORS.lens;
+  ctx.fillStyle = COLORS.lensFill;
+  ctx.lineWidth = 3;
+
+  drawSurfaceArc(ctx, s.frontCenter, s.frontRadius, lens.center, tangent, halfHeight);
+  drawSurfaceArc(ctx, s.backCenter, s.backRadius, lens.center, tangent, halfHeight);
+
+  const f = Optics.effectiveFocalLength(lens, 550);
+  if (isFinite(f)) drawFocalTicks(ctx, lens.center, s.axis, Math.abs(f));
+  const glassLabel = (Optics.GLASS_PRESETS[lens.glass] || Optics.GLASS_PRESETS.crown).label;
+  drawLabel(ctx, lens.center, s.axis, glassLabel, -18);
+}
+
+function drawSurfaceArc(ctx, surfaceCenter, radius, elCenter, tangent, halfHeight) {
+  const topRef = Optics.add(elCenter, Optics.scale(tangent, halfHeight));
+  const botRef = Optics.add(elCenter, Optics.scale(tangent, -halfHeight));
+  const a1 = Math.atan2(topRef.y - surfaceCenter.y, topRef.x - surfaceCenter.x);
+  const a2 = Math.atan2(botRef.y - surfaceCenter.y, botRef.x - surfaceCenter.x);
+  ctx.beginPath();
+  ctx.arc(surfaceCenter.x, surfaceCenter.y, radius, a1, a2, false);
+  ctx.stroke();
+}
+
+function drawFocalTicks(ctx, center, axis, f) {
+  for (const sign of [1, -1]) {
+    const p = Optics.add(center, Optics.scale(axis, sign * f));
+    ctx.strokeStyle = COLORS.axis;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(p.x - 5, p.y - 5);
+    ctx.lineTo(p.x + 5, p.y + 5);
+    ctx.moveTo(p.x - 5, p.y + 5);
+    ctx.lineTo(p.x + 5, p.y - 5);
+    ctx.stroke();
+  }
+}
+
+// ---------- mirror ----------
+
+function drawMirror(ctx, mirror, isSelected) {
+  const { a, b } = Optics.elementEndpoints(mirror);
+  const axis = Optics.fromAngle(mirror.angle);
+
+  ctx.strokeStyle = COLORS.mirrorBack;
+  ctx.lineWidth = 6;
+  ctx.beginPath();
+  ctx.moveTo(a.x - axis.x * 3, a.y - axis.y * 3);
+  ctx.lineTo(b.x - axis.x * 3, b.y - axis.y * 3);
+  ctx.stroke();
+
+  const bulge = mirror.surface === 'concave' ? -10 : mirror.surface === 'convex' ? 10 : 0;
+
+  ctx.strokeStyle = isSelected ? COLORS.selected : COLORS.mirror;
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(a.x, a.y);
+  if (bulge === 0) {
+    ctx.lineTo(b.x, b.y);
+  } else {
+    ctx.quadraticCurveTo(mirror.center.x + axis.x * bulge, mirror.center.y + axis.y * bulge, b.x, b.y);
+  }
+  ctx.stroke();
+
+  drawAxisLine(ctx, mirror);
+  const label = mirror.surface === 'flat' ? 'flat mirror' : `${mirror.surface} mirror, R = ${Math.round(mirror.radius)}px`;
+  drawLabel(ctx, mirror.center, axis, label);
+}
+
+// ---------- prism ----------
+
+function drawPrism(ctx, prism, isSelected) {
+  const { apex, face1, face2 } = Optics.buildPrismFaces(prism);
+
+  ctx.beginPath();
+  ctx.moveTo(apex.x, apex.y);
+  ctx.lineTo(face1.b.x, face1.b.y);
+  ctx.lineTo(face2.b.x, face2.b.y);
+  ctx.closePath();
+  ctx.fillStyle = COLORS.prismFill;
+  ctx.fill();
+  ctx.strokeStyle = isSelected ? COLORS.selected : COLORS.prism;
+  ctx.lineWidth = 3;
+  ctx.stroke();
+
+  drawAxisLine(ctx, prism);
+  const glassLabel = (Optics.GLASS_PRESETS[prism.glass] || Optics.GLASS_PRESETS.crown).label;
+  drawLabel(ctx, prism.center, Optics.fromAngle(prism.angle), `${prism.apexAngle}\u00B0 prism \u2014 ${glassLabel}`, -18);
+}
+
+// ---------- source ----------
+
 function drawSource(ctx, source, isSelected) {
-  ctx.fillStyle = isSelected ? COLORS.selected : COLORS.source;
+  const color = source.whiteLight ? '#ffffff' : Optics.wavelengthToRGB(source.wavelength);
+  ctx.fillStyle = isSelected ? COLORS.selected : color;
   ctx.beginPath();
   ctx.arc(source.position.x, source.position.y, 7, 0, Math.PI * 2);
   ctx.fill();
 
-  ctx.strokeStyle = 'rgba(255, 210, 63, 0.4)';
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
   ctx.lineWidth = 2;
   ctx.beginPath();
   ctx.arc(source.position.x, source.position.y, 12, 0, Math.PI * 2);
   ctx.stroke();
 
-  drawLabel(ctx, source.position, Optics.fromAngle(source.angle), source.mode);
+  const label = source.whiteLight ? 'white light' : `${source.mode}, ${source.wavelength}nm`;
+  drawLabel(ctx, source.position, Optics.fromAngle(source.angle), label);
+}
+
+// ---------- image-formation marker ----------
+
+function drawImageMarker(ctx, source, lens, info) {
+  if (!info.valid || info.parallel) return;
+  const axis = Optics.fromAngle(lens.angle);
+  const raw = Optics.dot(Optics.sub(source.position, lens.center), axis);
+  const sideSign = raw >= 0 ? -1 : 1; // image forms on the opposite side from the source
+  const imagePoint = Optics.add(lens.center, Optics.scale(axis, sideSign * info.imageDistance));
+
+  ctx.strokeStyle = info.real ? COLORS.imageReal : COLORS.imageVirtual;
+  ctx.lineWidth = 2;
+  ctx.setLineDash(info.real ? [] : [5, 5]);
+  ctx.beginPath();
+  ctx.arc(imagePoint.x, imagePoint.y, 8, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(imagePoint.x, imagePoint.y - 16);
+  ctx.lineTo(imagePoint.x, imagePoint.y + 16);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  ctx.font = '11px "IBM Plex Mono", monospace';
+  ctx.fillStyle = info.real ? COLORS.imageReal : COLORS.imageVirtual;
+  ctx.textAlign = 'center';
+  ctx.fillText(info.real ? 'real image' : 'virtual image', imagePoint.x, imagePoint.y - 22);
 }
 
 window.Render = {
   COLORS,
   drawBreadboard,
+  drawOpticalAxis,
   drawRayPath,
   drawLens,
   drawMirror,
+  drawPrism,
   drawSource,
+  drawImageMarker,
 };
