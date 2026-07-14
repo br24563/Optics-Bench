@@ -13,6 +13,8 @@
 
 * { box-sizing: border-box; }
 
+[hidden] { display: none !important; }
+
 html, body {
   margin: 0;
   height: 100%;
@@ -117,6 +119,37 @@ html, body {
 
 .field:last-child { margin-bottom: 0; }
 
+/* A label + slider + number-input trio: the qualitative slider on the left,
+   an exact quantitative value on the right, always in sync. */
+.field-pair {
+  display: grid;
+  grid-template-columns: 1fr 62px;
+  column-gap: 10px;
+  row-gap: 6px;
+  margin-bottom: 14px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.field-pair span { grid-column: 1 / span 2; }
+
+.field-pair.disabled { opacity: 0.4; }
+
+.checkbox-field {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+
+.checkbox-field input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+  flex-shrink: 0;
+}
+
 .unit {
   color: var(--text);
   font-weight: 500;
@@ -134,6 +167,28 @@ select {
   border-radius: 3px;
   padding: 6px 8px;
   font-family: var(--mono);
+}
+
+input[type="number"] {
+  width: 100%;
+  background: #0d1319;
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 5px 6px;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  text-align: right;
+}
+
+input[type="number"]:disabled,
+input[type="range"]:disabled {
+  opacity: 0.4;
+}
+
+#lens-ideal-controls, #lens-realistic-controls,
+#lens-controls, #mirror-controls, #prism-controls {
+  padding-top: 4px;
 }
 
 .toolbar {
@@ -160,9 +215,13 @@ button:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; 
 button.danger:hover { border-color: var(--accent); color: var(--accent); }
 
 .readout {
-  font-size: 13px;
+  font-size: 12.5px;
   color: var(--accent-2);
-  margin: 4px 0 0;
+  margin: 10px 0 0;
+  white-space: pre-line;
+  line-height: 1.6;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
 }
 
 .legend p {

@@ -12,13 +12,13 @@
   <div class="app">
     <header class="topbar">
       <h1>Optical&nbsp;Bench</h1>
-      <p class="tagline">A draggable, physically-real thin-lens &amp; mirror ray tracer — right in the browser.</p>
+      <p class="tagline">A draggable, physically-real ray tracer — ideal &amp; Snell's-law lenses, curved mirrors, and a dispersive prism, right in the browser.</p>
     </header>
 
     <main class="workspace">
       <div class="canvas-wrap">
         <canvas id="bench"></canvas>
-        <p class="hint">Drag the yellow source, lenses, or mirrors. Click one to edit it on the right.</p>
+        <p class="hint">Drag the source, elements, or the optical axis itself. Elements snap onto the axis near it. Click anything to edit it precisely on the right.</p>
       </div>
 
       <aside class="panel">
@@ -27,6 +27,7 @@
           <div class="toolbar">
             <button id="add-lens">+ Lens</button>
             <button id="add-mirror">+ Mirror</button>
+            <button id="add-prism">+ Prism</button>
             <button id="delete-selected" class="danger">Delete selected</button>
           </div>
         </section>
@@ -40,51 +41,193 @@
               <option value="parallel">Parallel (collimated beam)</option>
             </select>
           </label>
-          <label class="field">
-            Rays <span class="unit" id="ray-count-val"></span>
+
+          <label class="field-pair">
+            <span>Rays</span>
             <input type="range" id="ray-count" min="3" max="41" step="2" value="11" />
+            <input type="number" id="ray-count-num" min="3" max="41" step="2" value="11" />
           </label>
-          <label class="field" id="spread-row">
-            Fan spread (°)
+
+          <label class="field-pair" id="spread-row">
+            <span>Fan spread (°)</span>
             <input type="range" id="source-spread" min="5" max="180" value="40" />
+            <input type="number" id="source-spread-num" min="5" max="180" value="40" />
           </label>
-          <label class="field" id="width-row" hidden>
-            Beam width (px)
+
+          <label class="field-pair" id="width-row" hidden>
+            <span>Beam width (px)</span>
             <input type="range" id="source-width" min="20" max="400" value="140" />
+            <input type="number" id="source-width-num" min="20" max="400" value="140" />
           </label>
-          <label class="field">
-            Aim angle (°)
+
+          <label class="field-pair">
+            <span>Aim angle (°)</span>
             <input type="range" id="source-angle" min="-180" max="180" value="0" />
+            <input type="number" id="source-angle-num" min="-180" max="180" value="0" />
+          </label>
+
+          <label class="field-pair" id="wavelength-row">
+            <span>Wavelength (nm)</span>
+            <input type="range" id="source-wavelength" min="380" max="700" value="632" />
+            <input type="number" id="source-wavelength-num" min="380" max="700" value="632" />
+          </label>
+
+          <label class="field checkbox-field">
+            <input type="checkbox" id="source-white" />
+            Simulate white light (traces 7 wavelengths — try it through the prism)
           </label>
         </section>
 
         <section class="panel-section" id="element-controls" hidden>
           <h2 id="element-title">Selected element</h2>
-          <label class="field">
-            Angle (°)
+
+          <div class="field-pair">
+            <span>Position (px)</span>
+            <input type="number" id="el-x" />
+            <input type="number" id="el-y" />
+          </div>
+
+          <label class="field-pair">
+            <span>Angle (°)</span>
             <input type="range" id="el-angle" min="-180" max="180" value="0" />
+            <input type="number" id="el-angle-num" min="-180" max="180" value="0" />
           </label>
-          <label class="field" id="focal-row">
-            Focal length (px)
-            <input type="range" id="el-focal" min="-300" max="300" step="5" value="140" />
-          </label>
+
+          <!-- LENS -->
+          <div id="lens-controls" hidden>
+            <label class="field">
+              Ray model
+              <select id="el-lens-model">
+                <option value="ideal">Ideal thin lens</option>
+                <option value="realistic">Realistic (Snell's law)</option>
+              </select>
+            </label>
+
+            <div id="lens-ideal-controls">
+              <label class="field">
+                Type
+                <select id="el-lens-type">
+                  <option value="converging">Converging (convex)</option>
+                  <option value="diverging">Diverging (concave)</option>
+                </select>
+              </label>
+              <label class="field-pair">
+                <span>Focal length (px)</span>
+                <input type="range" id="el-focal" min="20" max="400" step="5" value="140" />
+                <input type="number" id="el-focal-num" min="20" max="400" step="5" value="140" />
+              </label>
+            </div>
+
+            <div id="lens-realistic-controls" hidden>
+              <label class="field">
+                Glass
+                <select id="el-glass">
+                  <option value="crown">Crown glass (BK7-like)</option>
+                  <option value="flint">Flint glass (more dispersive)</option>
+                  <option value="custom">Custom Cauchy coefficients</option>
+                </select>
+              </label>
+              <div id="lens-custom-glass" class="field-pair" hidden>
+                <span>A / B (μm²)</span>
+                <input type="number" id="el-custom-a" step="0.001" value="1.50" />
+                <input type="number" id="el-custom-b" step="0.0005" value="0.0042" />
+              </div>
+              <label class="field-pair">
+                <span>R1 — front (px)</span>
+                <input type="range" id="el-r1" min="-400" max="400" step="5" value="150" />
+                <input type="number" id="el-r1-num" min="-400" max="400" step="5" value="150" />
+              </label>
+              <label class="field-pair">
+                <span>R2 — back (px)</span>
+                <input type="range" id="el-r2" min="-400" max="400" step="5" value="-150" />
+                <input type="number" id="el-r2-num" min="-400" max="400" step="5" value="-150" />
+              </label>
+              <label class="field-pair">
+                <span>Center thickness (px)</span>
+                <input type="range" id="el-thickness" min="4" max="80" step="2" value="30" />
+                <input type="number" id="el-thickness-num" min="4" max="80" step="2" value="30" />
+              </label>
+              <p class="readout" id="lens-effective-f"></p>
+            </div>
+          </div>
+
+          <!-- MIRROR -->
+          <div id="mirror-controls" hidden>
+            <label class="field">
+              Surface
+              <select id="el-mirror-surface">
+                <option value="flat">Flat</option>
+                <option value="concave">Concave (converging)</option>
+                <option value="convex">Convex (diverging)</option>
+              </select>
+            </label>
+            <label class="field-pair" id="mirror-radius-row" hidden>
+              <span>Radius of curvature (px)</span>
+              <input type="range" id="el-mirror-radius" min="40" max="600" step="10" value="240" />
+              <input type="number" id="el-mirror-radius-num" min="40" max="600" step="10" value="240" />
+            </label>
+          </div>
+
+          <!-- PRISM -->
+          <div id="prism-controls" hidden>
+            <label class="field-pair">
+              <span>Apex angle (°)</span>
+              <input type="range" id="el-prism-apex" min="20" max="90" value="60" />
+              <input type="number" id="el-prism-apex-num" min="20" max="90" value="60" />
+            </label>
+            <label class="field-pair">
+              <span>Face length (px)</span>
+              <input type="range" id="el-prism-height" min="60" max="240" step="5" value="120" />
+              <input type="number" id="el-prism-height-num" min="60" max="240" step="5" value="120" />
+            </label>
+            <label class="field">
+              Glass
+              <select id="el-prism-glass">
+                <option value="crown">Crown glass (BK7-like)</option>
+                <option value="flint">Flint glass (more dispersive)</option>
+                <option value="custom">Custom Cauchy coefficients</option>
+              </select>
+            </label>
+            <div id="prism-custom-glass" class="field-pair" hidden>
+              <span>A / B (μm²)</span>
+              <input type="number" id="el-prism-custom-a" step="0.001" value="1.50" />
+              <input type="number" id="el-prism-custom-b" step="0.0005" value="0.0042" />
+            </div>
+          </div>
+
           <p class="readout" id="el-readout"></p>
+        </section>
+
+        <section class="panel-section" id="image-analysis" hidden>
+          <h2>Image formation</h2>
+          <p class="readout" id="image-readout"></p>
         </section>
 
         <details class="panel-section legend">
           <summary>How the physics works</summary>
           <p>
-            Each lens uses the classic thin-lens graphical construction:
-            a ray through the optical center is never bent, so every ray
-            parallel to it must refract to cross the same point on the
-            focal plane. That's the only rule driving every bend you see —
-            no lookup tables, no fake bending.
+            <strong>Ideal lenses</strong> use the classic thin-lens graphical
+            construction: a ray through the optical center is never bent, so
+            every ray parallel to it must refract to cross the same point on
+            the focal plane.
           </p>
           <p>
-            Mirrors use plain specular reflection
-            (angle of incidence = angle of reflection). Positive focal
-            length draws a convex (converging) lens; negative draws a
-            concave (diverging) one.
+            <strong>Realistic lenses</strong> trace actual Snell's law through
+            two spherical glass surfaces, using each surface's radius of
+            curvature and the glass's refractive index — including real
+            spherical aberration (rays far from the axis focus slightly
+            differently than paraxial rays, just like a real lens).
+          </p>
+          <p>
+            <strong>Mirrors</strong> reflect with angle of incidence equal to
+            angle of reflection; curved mirrors add a focusing correction
+            equivalent to a thin lens of focal length R/2.
+          </p>
+          <p>
+            <strong>The prism</strong> refracts through two real flat glass
+            faces. Its refractive index depends on wavelength (Cauchy's
+            equation), so shorter (bluer) wavelengths bend more — the same
+            reason prisms split white light into a rainbow.
           </p>
         </details>
       </aside>
