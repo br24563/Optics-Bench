@@ -42,7 +42,7 @@
             </select>
           </label>
 
-          <label class="field-pair">
+          <label class="field-pair" id="ray-count-row">
             <span>Rays</span>
             <input type="range" id="ray-count" min="3" max="41" step="2" value="11" />
             <input type="number" id="ray-count-num" min="3" max="41" step="2" value="11" />
@@ -74,7 +74,7 @@
 
           <label class="field checkbox-field">
             <input type="checkbox" id="source-white" />
-            Simulate white light (traces 7 wavelengths — try it through the prism)
+            Simulate white light (traces 7 wavelengths as a single clean beam — try it through the prism)
           </label>
         </section>
 
@@ -172,8 +172,8 @@
           <div id="prism-controls" hidden>
             <label class="field-pair">
               <span>Apex angle (°)</span>
-              <input type="range" id="el-prism-apex" min="20" max="90" value="60" />
-              <input type="number" id="el-prism-apex-num" min="20" max="90" value="60" />
+              <input type="range" id="el-prism-apex" min="20" max="90" value="65" />
+              <input type="number" id="el-prism-apex-num" min="20" max="90" value="65" />
             </label>
             <label class="field-pair">
               <span>Face length (px)</span>
