@@ -137,38 +137,93 @@ function drawLens(ctx, lens, isSelected) {
   drawLabel(ctx, lens.center, Optics.fromAngle(lens.angle), modelLabel, 26);
 }
 
+// Standard textbook lens symbol: a straight line with arrowheads at each
+// end. Converging (f > 0) lenses flare their arrowheads outward; diverging
+// (f < 0) lenses point them inward — the same convention used in optics
+// textbooks, so the symbol itself tells you the lens type at a glance.
 function drawIdealLens(ctx, lens, isSelected) {
-  const { a, b } = Optics.elementEndpoints(lens);
-  const converging = lens.focalLength > 0;
   const axis = Optics.fromAngle(lens.angle);
-  const bulge = converging ? 10 : -8;
+  const tangent = { x: -axis.y, y: axis.x };
+  const halfHeight = lens.height / 2;
+  const converging = lens.focalLength > 0;
+  const color = isSelected ? COLORS.selected : COLORS.lens;
 
-  ctx.strokeStyle = isSelected ? COLORS.selected : COLORS.lens;
+  const top = Optics.add(lens.center, Optics.scale(tangent, halfHeight));
+  const bottom = Optics.add(lens.center, Optics.scale(tangent, -halfHeight));
+
+  ctx.strokeStyle = color;
   ctx.lineWidth = 3;
   ctx.beginPath();
-  ctx.moveTo(a.x, a.y);
-  ctx.quadraticCurveTo(lens.center.x + axis.x * bulge, lens.center.y + axis.y * bulge, b.x, b.y);
+  ctx.moveTo(top.x, top.y);
+  ctx.lineTo(bottom.x, bottom.y);
   ctx.stroke();
-  ctx.beginPath();
-  ctx.moveTo(a.x, a.y);
-  ctx.quadraticCurveTo(lens.center.x - axis.x * bulge, lens.center.y - axis.y * bulge, b.x, b.y);
-  ctx.stroke();
+
+  const topDir = converging ? tangent : Optics.scale(tangent, -1);
+  const bottomDir = converging ? Optics.scale(tangent, -1) : tangent;
+  drawLensArrow(ctx, top, topDir, color);
+  drawLensArrow(ctx, bottom, bottomDir, color);
 
   drawFocalTicks(ctx, lens.center, axis, Math.abs(lens.focalLength));
   drawLabel(ctx, lens.center, axis, `f = ${lens.focalLength > 0 ? '+' : ''}${Math.round(lens.focalLength)}px`, -18);
 }
 
+function drawLensArrow(ctx, from, dir, color) {
+  const stemLen = 10;
+  const headLen = 9;
+  const headWidth = 8;
+  const stemEnd = Optics.add(from, Optics.scale(dir, stemLen));
+  const tip = Optics.add(stemEnd, Optics.scale(dir, headLen));
+  const perp = { x: -dir.y, y: dir.x };
+  const left = Optics.add(stemEnd, Optics.scale(perp, headWidth / 2));
+  const right = Optics.add(stemEnd, Optics.scale(perp, -headWidth / 2));
+
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(from.x, from.y);
+  ctx.lineTo(stemEnd.x, stemEnd.y);
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.moveTo(tip.x, tip.y);
+  ctx.lineTo(left.x, left.y);
+  ctx.lineTo(right.x, right.y);
+  ctx.closePath();
+  ctx.fillStyle = color;
+  ctx.fill();
+}
+
+// Realistic lens: each surface is drawn as a true circular arc, parametrized
+// by its own angle (not by projecting toward a point that might not even be
+// reachable on that circle — the bug that caused runaway shapes for small
+// radii). The arc is capped at a sane fraction of its radius; beyond that,
+// a flat rim closes the gap out to the full aperture height, so a small
+// radius on a tall lens gets a believable "edge" instead of an absurd bulge.
+// Both surfaces share one safe aperture height, found by sampling the gap
+// between them, so a strongly-curved pair can never cross into each other.
 function drawRealisticLens(ctx, lens, isSelected) {
   const s = Optics.buildLensSurfaces(lens);
   const tangent = { x: -s.axis.y, y: s.axis.x };
   const halfHeight = lens.height / 2;
+  const safeHeight = computeSafeAperture(lens, s, halfHeight);
+
+  const front = buildSurfaceOutline(s.frontCenter, lens.r1, s.frontVertex, lens.center, tangent, halfHeight, safeHeight);
+  const back = buildSurfaceOutline(s.backCenter, lens.r2, s.backVertex, lens.center, tangent, halfHeight, safeHeight);
+
+  // Fill the glass body: front outline bottom-to-top, then back outline
+  // top-to-bottom, forming one closed shape.
+  ctx.beginPath();
+  ctx.moveTo(front[0].x, front[0].y);
+  for (const p of front) ctx.lineTo(p.x, p.y);
+  for (let i = back.length - 1; i >= 0; i--) ctx.lineTo(back[i].x, back[i].y);
+  ctx.closePath();
+  ctx.fillStyle = COLORS.lensFill;
+  ctx.fill();
 
   ctx.strokeStyle = isSelected ? COLORS.selected : COLORS.lens;
-  ctx.fillStyle = COLORS.lensFill;
   ctx.lineWidth = 3;
-
-  drawSurfaceArc(ctx, s.frontCenter, s.frontRadius, lens.center, tangent, halfHeight);
-  drawSurfaceArc(ctx, s.backCenter, s.backRadius, lens.center, tangent, halfHeight);
+  strokeOutline(ctx, front);
+  strokeOutline(ctx, back);
 
   const f = Optics.effectiveFocalLength(lens, 550);
   if (isFinite(f)) drawFocalTicks(ctx, lens.center, s.axis, Math.abs(f));
@@ -176,13 +231,62 @@ function drawRealisticLens(ctx, lens, isSelected) {
   drawLabel(ctx, lens.center, s.axis, glassLabel, -18);
 }
 
-function drawSurfaceArc(ctx, surfaceCenter, radius, elCenter, tangent, halfHeight) {
-  const topRef = Optics.add(elCenter, Optics.scale(tangent, halfHeight));
-  const botRef = Optics.add(elCenter, Optics.scale(tangent, -halfHeight));
-  const a1 = Math.atan2(topRef.y - surfaceCenter.y, topRef.x - surfaceCenter.x);
-  const a2 = Math.atan2(botRef.y - surfaceCenter.y, botRef.x - surfaceCenter.x);
+// Samples the gap between the front and back surfaces from the axis
+// outward, and returns the largest half-height (up to the aperture and an
+// 85%-of-radius cap on each surface) at which the two surfaces are still
+// separated by a minimum clearance. Works regardless of which surface is
+// convex/concave/flat-ish, since it just measures the actual gap directly
+// rather than assuming a particular monotonic formula.
+function computeSafeAperture(lens, s, halfHeight) {
+  const MIN_GAP = 2;
+  const halfThickness = lens.thickness / 2;
+  const upperBound = Math.min(halfHeight, Math.abs(lens.r1) * 0.85, Math.abs(lens.r2) * 0.85);
+  const steps = 40;
+  let safe = 0;
+  for (let i = 0; i <= steps; i++) {
+    const tau = (upperBound * i) / steps;
+    const frontOffset = surfaceAxialOffset(tau, lens.r1, -halfThickness);
+    const backOffset = surfaceAxialOffset(tau, lens.r2, halfThickness);
+    if (backOffset - frontOffset < MIN_GAP) break;
+    safe = tau;
+  }
+  return safe;
+}
+
+// Axial (along-axis) position of a surface at tangential height `tau`,
+// relative to the lens center, for a surface with signed radius `radius`
+// whose vertex sits at `baseOffset` along the axis.
+function surfaceAxialOffset(tau, radius, baseOffset) {
+  const absR = Math.abs(radius);
+  const ratio = Math.min(1, tau / absR);
+  const oneMinusCos = 1 - Math.sqrt(Math.max(0, 1 - ratio * ratio));
+  return baseOffset + radius * oneMinusCos;
+}
+
+function buildSurfaceOutline(surfaceCenter, radius, vertex, elCenter, tangent, halfHeight, safeHeight) {
+  const vertexDir = Optics.normalize(Optics.sub(vertex, surfaceCenter));
+  const absR = Math.abs(radius);
+  const thetaMax = Math.asin(Math.min(1, safeHeight / absR));
+
+  const segments = 20;
+  const arcPoints = [];
+  for (let i = 0; i <= segments; i++) {
+    const theta = -thetaMax + (2 * thetaMax * i) / segments;
+    arcPoints.push({
+      x: surfaceCenter.x + absR * (Math.cos(theta) * vertexDir.x + Math.sin(theta) * tangent.x),
+      y: surfaceCenter.y + absR * (Math.cos(theta) * vertexDir.y + Math.sin(theta) * tangent.y),
+    });
+  }
+
+  const bottomCorner = Optics.add(elCenter, Optics.scale(tangent, -halfHeight));
+  const topCorner = Optics.add(elCenter, Optics.scale(tangent, halfHeight));
+  return [bottomCorner, ...arcPoints, topCorner];
+}
+
+function strokeOutline(ctx, points) {
   ctx.beginPath();
-  ctx.arc(surfaceCenter.x, surfaceCenter.y, radius, a1, a2, false);
+  ctx.moveTo(points[0].x, points[0].y);
+  for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
   ctx.stroke();
 }
 

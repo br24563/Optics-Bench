@@ -80,9 +80,17 @@ window.addEventListener('resize', resizeCanvas);
 // ---------- ray generation ----------
 
 function baseRays(source) {
-  const rays = [];
   const aimRad = (source.angle * Math.PI) / 180;
 
+  // White light reads cleanly as a single beam splitting into a spectrum —
+  // tracing an entire fan x 7 wavelengths at once just produces an
+  // overlapping muddle (and many of those rays miss the prism's aperture
+  // at typical spread angles anyway), so ignore spread/width/count here.
+  if (source.whiteLight) {
+    return [{ origin: source.position, dir: Optics.fromAngle(aimRad) }];
+  }
+
+  const rays = [];
   if (source.mode === 'point') {
     const spreadRad = (source.spread * Math.PI) / 180;
     const count = source.rayCount;
@@ -243,11 +251,35 @@ bindPair(document.getElementById('source-width'), document.getElementById('sourc
 bindPair(document.getElementById('source-angle'), document.getElementById('source-angle-num'), (v) => { scene.source.angle = v; draw(); });
 bindPair(wavelengthSlider, wavelengthNum, (v) => { scene.source.wavelength = v; draw(); });
 
+const rayCountRow = document.getElementById('ray-count-row');
+const rayCountSlider = document.getElementById('ray-count');
+const rayCountNum = document.getElementById('ray-count-num');
+const sourceSpreadSlider = document.getElementById('source-spread');
+const sourceSpreadNum = document.getElementById('source-spread-num');
+const sourceWidthSlider = document.getElementById('source-width');
+const sourceWidthNum = document.getElementById('source-width-num');
+
 whiteEl.addEventListener('change', () => {
   scene.source.whiteLight = whiteEl.checked;
-  wavelengthRow.classList.toggle('disabled', scene.source.whiteLight);
-  wavelengthSlider.disabled = scene.source.whiteLight;
-  wavelengthNum.disabled = scene.source.whiteLight;
+  const disable = scene.source.whiteLight;
+
+  wavelengthRow.classList.toggle('disabled', disable);
+  wavelengthSlider.disabled = disable;
+  wavelengthNum.disabled = disable;
+
+  // White light traces a single beam, so the fan/spread/width controls
+  // have no effect while it's on — disable them rather than leave a
+  // misleading control that silently does nothing.
+  rayCountRow.classList.toggle('disabled', disable);
+  rayCountSlider.disabled = disable;
+  rayCountNum.disabled = disable;
+  spreadRow.classList.toggle('disabled', disable);
+  sourceSpreadSlider.disabled = disable;
+  sourceSpreadNum.disabled = disable;
+  widthRow.classList.toggle('disabled', disable);
+  sourceWidthSlider.disabled = disable;
+  sourceWidthNum.disabled = disable;
+
   draw();
 });
 
@@ -496,7 +528,7 @@ document.getElementById('add-prism').addEventListener('click', () => {
   const el = {
     kind: 'prism',
     center: { x: scene.width * 0.55, y: scene.axisY },
-    angle: 0, apexAngle: 60, height: 120,
+    angle: 0, apexAngle: 65, height: 120,
     glass: 'crown', customA: 1.50, customB: 0.0042,
   };
   scene.elements.push(el);

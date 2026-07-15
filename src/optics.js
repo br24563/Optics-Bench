@@ -142,8 +142,14 @@ function refractThinLens(point, dir, lensLike) {
 // not lab-grade glass data, but the right shape and the right idea: blue
 // bends more than red because n(λ) rises toward shorter wavelengths.
 const GLASS_PRESETS = {
-  crown: { label: 'Crown glass (BK7-like), n\u2248 1.52', A: 1.5046, B: 0.00420 },
-  flint: { label: 'Flint glass, n\u2248 1.62', A: 1.6034, B: 0.01360 },
+  // Real BK7/flint dispersion is genuinely subtle — under a degree of
+  // spread across the whole visible spectrum — which is invisible at
+  // canvas scale over a few hundred pixels. These B coefficients are
+  // moderately exaggerated from real glass data so the rainbow is actually
+  // visible; the wavelength-dependence itself (Cauchy's equation) is real,
+  // only the strength of the effect is tuned up for visibility.
+  crown: { label: 'Crown glass (BK7-like), n\u2248 1.52', A: 1.5046, B: 0.0180 },
+  flint: { label: 'Flint glass, n\u2248 1.62', A: 1.6034, B: 0.0500 },
 };
 
 function cauchyIndex(A, B, wavelengthNm) {
