@@ -14,6 +14,7 @@ const scene = {
   width: 0,
   height: 0,
   axisY: 0,
+  pan: { x: 0, y: 0 },
   source: {
     position: { x: 90, y: 0 },
     mode: 'point',
@@ -129,12 +130,20 @@ function generateRays(source) {
 // ---------- draw ----------
 
 function draw() {
-  Render.drawBreadboard(ctx, scene.width, scene.height);
-  Render.drawOpticalAxis(ctx, scene.width, scene.axisY, dragging && snapActive);
+  Render.drawBreadboard(ctx, scene.width, scene.height, scene.pan.x, scene.pan.y);
+
+  const viewMinX = -scene.pan.x;
+  const viewMinY = -scene.pan.y;
+  const viewport = { minX: viewMinX, minY: viewMinY, maxX: viewMinX + scene.width, maxY: viewMinY + scene.height };
+
+  ctx.save();
+  ctx.translate(scene.pan.x, scene.pan.y);
+
+  Render.drawOpticalAxis(ctx, viewMinX, viewport.maxX, scene.axisY, dragging && dragging.type !== 'pan' && snapActive);
 
   const rays = generateRays(scene.source);
   for (const ray of rays) {
-    const points = Optics.traceRay(ray.origin, ray.dir, scene.elements, scene.width, scene.height, ray.wavelength);
+    const points = Optics.traceRay(ray.origin, ray.dir, scene.elements, viewport, ray.wavelength);
     Render.drawRayPath(ctx, points, Optics.wavelengthToRGB(ray.wavelength));
   }
 
@@ -152,6 +161,8 @@ function draw() {
     const info = Optics.computeImageInfo(scene.source, lensSel);
     Render.drawImageMarker(ctx, scene.source, lensSel, info);
   }
+
+  ctx.restore();
 
   updateReadouts();
 }
@@ -195,20 +206,42 @@ function canvasPoint(evt) {
   return { x: evt.clientX - rect.left, y: evt.clientY - rect.top };
 }
 
+function toWorld(screenPoint) {
+  return { x: screenPoint.x - scene.pan.x, y: screenPoint.y - scene.pan.y };
+}
+
 // ---------- mouse events ----------
 
 canvas.addEventListener('mousedown', (evt) => {
-  const p = canvasPoint(evt);
-  const hit = hitTest(p);
-  selected = hit;
-  dragging = hit;
+  const screenP = canvasPoint(evt);
+  const worldP = toWorld(screenP);
+  const hit = hitTest(worldP);
+
+  if (hit) {
+    selected = hit;
+    dragging = hit;
+  } else {
+    // Empty space: pan the whole bench instead of selecting nothing.
+    selected = null;
+    dragging = { type: 'pan', startMouse: screenP, startPan: { x: scene.pan.x, y: scene.pan.y } };
+    canvas.classList.add('panning');
+  }
   syncPanelToSelection();
   draw();
 });
 
 window.addEventListener('mousemove', (evt) => {
   if (!dragging) return;
-  const p = canvasPoint(evt);
+
+  if (dragging.type === 'pan') {
+    const screenP = canvasPoint(evt);
+    scene.pan.x = dragging.startPan.x + (screenP.x - dragging.startMouse.x);
+    scene.pan.y = dragging.startPan.y + (screenP.y - dragging.startMouse.y);
+    draw();
+    return;
+  }
+
+  const p = toWorld(canvasPoint(evt));
 
   if (dragging.type === 'axis') {
     scene.axisY = p.y;
@@ -226,7 +259,12 @@ window.addEventListener('mousemove', (evt) => {
   draw();
 });
 
-window.addEventListener('mouseup', () => { dragging = null; snapActive = false; draw(); });
+window.addEventListener('mouseup', () => {
+  dragging = null;
+  snapActive = false;
+  canvas.classList.remove('panning');
+  draw();
+});
 
 // ---------- panel: source controls ----------
 
@@ -316,6 +354,8 @@ bindPair(document.getElementById('el-angle'), document.getElementById('el-angle-
 const lensModelEl = document.getElementById('el-lens-model');
 const lensIdealDiv = document.getElementById('lens-ideal-controls');
 const lensRealisticDiv = document.getElementById('lens-realistic-controls');
+const lensHeightSlider = document.getElementById('el-lens-height');
+const lensHeightNum = document.getElementById('el-lens-height-num');
 const lensTypeEl = document.getElementById('el-lens-type');
 const focalSlider = document.getElementById('el-focal');
 const focalNum = document.getElementById('el-focal-num');
@@ -329,6 +369,13 @@ const r2Slider = document.getElementById('el-r2');
 const r2Num = document.getElementById('el-r2-num');
 const thicknessSlider = document.getElementById('el-thickness');
 const thicknessNum = document.getElementById('el-thickness-num');
+
+bindPair(lensHeightSlider, lensHeightNum, (v) => {
+  const el = selectedOfKind('lens');
+  if (!el) return;
+  el.height = v;
+  draw();
+});
 
 lensModelEl.addEventListener('change', () => {
   const el = selectedOfKind('lens');
@@ -426,6 +473,7 @@ function syncPanelToSelection() {
   prismControlsDiv.hidden = el.kind !== 'prism';
 
   if (el.kind === 'lens') {
+    setPair(lensHeightSlider, lensHeightNum, el.height);
     lensModelEl.value = el.model;
     lensIdealDiv.hidden = el.model !== 'ideal';
     lensRealisticDiv.hidden = el.model !== 'realistic';
@@ -543,6 +591,11 @@ document.getElementById('delete-selected').addEventListener('click', () => {
   scene.elements = scene.elements.filter((e) => e !== el);
   selected = null;
   syncPanelToSelection();
+  draw();
+});
+
+document.getElementById('reset-view').addEventListener('click', () => {
+  scene.pan = { x: 0, y: 0 };
   draw();
 });
 

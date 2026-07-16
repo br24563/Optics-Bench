@@ -82,19 +82,19 @@ function intersectCircle(origin, dir, center, radius) {
   return { t, point: add(origin, scale(dir, t)) };
 }
 
-function intersectBounds(origin, dir, width, height) {
+function intersectBounds(origin, dir, minX, minY, maxX, maxY) {
   const candidates = [];
   const edges = [
-    [{ x: 0, y: 0 }, { x: width, y: 0 }],
-    [{ x: width, y: 0 }, { x: width, y: height }],
-    [{ x: width, y: height }, { x: 0, y: height }],
-    [{ x: 0, y: height }, { x: 0, y: 0 }],
+    [{ x: minX, y: minY }, { x: maxX, y: minY }],
+    [{ x: maxX, y: minY }, { x: maxX, y: maxY }],
+    [{ x: maxX, y: maxY }, { x: minX, y: maxY }],
+    [{ x: minX, y: maxY }, { x: minX, y: minY }],
   ];
   for (const [p1, p2] of edges) {
     const hit = intersectSegment(origin, dir, p1, p2);
     if (hit) candidates.push(hit);
   }
-  if (candidates.length === 0) return add(origin, scale(dir, Math.max(width, height)));
+  if (candidates.length === 0) return add(origin, scale(dir, Math.max(maxX - minX, maxY - minY)));
   candidates.sort((a, b) => a.t - b.t);
   return candidates[0].point;
 }
@@ -284,20 +284,33 @@ function buildPrismFaces(prism) {
   if (dot(dir2, axis) > 0) dir2 = scale(dir2, -1);
 
   const apex = prism.center;
+  const corner1 = add(apex, scale(dir1, prism.height));
+  const corner2 = add(apex, scale(dir2, prism.height));
+
+  // The base closes the triangle between the two angled faces. Without it,
+  // any ray that doesn't happen to cross to the *other* angled face within
+  // its finite length has nowhere physically correct to exit. Its outward
+  // normal points away from the apex.
+  const baseDir = normalize(sub(corner2, corner1));
+  let baseNormal = { x: -baseDir.y, y: baseDir.x };
+  if (dot(baseNormal, axis) < 0) baseNormal = scale(baseNormal, -1);
+
   return {
     apex,
-    face1: { a: apex, b: add(apex, scale(dir1, prism.height)), normal: n1 },
-    face2: { a: apex, b: add(apex, scale(dir2, prism.height)), normal: n2 },
+    face1: { a: apex, b: corner1, normal: n1 },
+    face2: { a: apex, b: corner2, normal: n2 },
+    face3: { a: corner1, b: corner2, normal: baseNormal },
   };
 }
 
 function findPrismHit(prism, origin, dir) {
-  const { face1, face2 } = buildPrismFaces(prism);
+  const { face1, face2, face3 } = buildPrismFaces(prism);
+  const faces = [{ f: face1, id: 1 }, { f: face2, id: 2 }, { f: face3, id: 3 }];
   const candidates = [];
-  const h1 = intersectSegment(origin, dir, face1.a, face1.b);
-  if (h1) candidates.push({ t: h1.t, point: h1.point, face: 1, normal: face1.normal });
-  const h2 = intersectSegment(origin, dir, face2.a, face2.b);
-  if (h2) candidates.push({ t: h2.t, point: h2.point, face: 2, normal: face2.normal });
+  for (const { f, id } of faces) {
+    const h = intersectSegment(origin, dir, f.a, f.b);
+    if (h) candidates.push({ t: h.t, point: h.point, face: id, normal: f.normal });
+  }
   if (candidates.length === 0) return null;
   candidates.sort((a, b) => a.t - b.t);
   return candidates[0];
@@ -311,7 +324,7 @@ function prismIndexAt(prism, wavelengthNm) {
 }
 
 function propagatePrism(prism, origin, dir, hit, wavelengthNm) {
-  const { face1, face2 } = buildPrismFaces(prism);
+  const { face1, face2, face3 } = buildPrismFaces(prism);
   const n = prismIndexAt(prism, wavelengthNm);
 
   const dirInside = refractVector(dir, hit.normal, 1.0, n);
@@ -319,20 +332,32 @@ function propagatePrism(prism, origin, dir, hit, wavelengthNm) {
     return { points: [hit.point], exitPoint: hit.point, exitDir: reflect(dir, hit.normal) };
   }
 
-  const exitFace = hit.face === 1 ? face2 : face1;
-  const exitHit = intersectSegment(hit.point, dirInside, exitFace.a, exitFace.b);
-  if (!exitHit) {
-    // Ray exits through the open base rather than the other face — let it
-    // continue straight rather than vanishing.
-    return { points: [hit.point], exitPoint: hit.point, exitDir: dirInside };
+  // The prism is a real closed triangle now, so whichever of the other two
+  // faces the internal ray actually reaches is the correct exit — not
+  // always "the other angled face." A convex triangle guarantees exactly
+  // one of them is hit (barring an exact-vertex degenerate case).
+  const faces = [{ f: face1, id: 1 }, { f: face2, id: 2 }, { f: face3, id: 3 }];
+  const exitCandidates = [];
+  for (const { f, id } of faces) {
+    if (id === hit.face) continue;
+    const h = intersectSegment(hit.point, dirInside, f.a, f.b);
+    if (h) exitCandidates.push({ point: h.point, normal: f.normal, t: h.t });
   }
 
-  const dirOut = refractVector(dirInside, exitFace.normal, n, 1.0);
+  if (exitCandidates.length === 0) {
+    // Degenerate (e.g. hit exactly on a vertex) — continue unbent rather
+    // than vanish.
+    return { points: [hit.point], exitPoint: hit.point, exitDir: dirInside };
+  }
+  exitCandidates.sort((a, b) => a.t - b.t);
+  const exitHit = exitCandidates[0];
+
+  const dirOut = refractVector(dirInside, exitHit.normal, n, 1.0);
   if (!dirOut) {
     return {
       points: [hit.point, exitHit.point],
       exitPoint: exitHit.point,
-      exitDir: reflect(dirInside, exitFace.normal),
+      exitDir: reflect(dirInside, exitHit.normal),
     };
   }
   return { points: [hit.point, exitHit.point], exitPoint: exitHit.point, exitDir: dirOut };
@@ -381,7 +406,7 @@ function propagateElement(el, origin, dir, hit, wavelengthNm) {
 
 // ---------- full ray trace through a scene ----------
 
-function traceRay(origin, dir, elements, width, height, wavelengthNm = 550, maxBounces = 24) {
+function traceRay(origin, dir, elements, viewport, wavelengthNm = 550, maxBounces = 24) {
   const points = [origin];
   let currentOrigin = origin;
   let currentDir = normalize(dir);
@@ -399,7 +424,7 @@ function traceRay(origin, dir, elements, width, height, wavelengthNm = 550, maxB
     }
 
     if (!closest) {
-      points.push(intersectBounds(currentOrigin, currentDir, width, height));
+      points.push(intersectBounds(currentOrigin, currentDir, viewport.minX, viewport.minY, viewport.maxX, viewport.maxY));
       break;
     }
 

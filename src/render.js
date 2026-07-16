@@ -25,19 +25,25 @@ const COLORS = {
 
 const GRID_SPACING = 28;
 
-function drawBreadboard(ctx, width, height) {
+function drawBreadboard(ctx, width, height, panX = 0, panY = 0) {
   ctx.fillStyle = COLORS.bg;
   ctx.fillRect(0, 0, width, height);
 
+  // The grid is drawn in screen space (cheap, always fills the canvas) but
+  // offset by the pan so it reads as a fixed world-space pattern scrolling
+  // underneath a moving viewport, rather than a static screen overlay.
+  const offsetX = ((panX % GRID_SPACING) + GRID_SPACING) % GRID_SPACING;
+  const offsetY = ((panY % GRID_SPACING) + GRID_SPACING) % GRID_SPACING;
+
   ctx.strokeStyle = COLORS.grid;
   ctx.lineWidth = 1;
-  for (let x = GRID_SPACING; x < width; x += GRID_SPACING) {
+  for (let x = offsetX; x < width; x += GRID_SPACING) {
     ctx.beginPath();
     ctx.moveTo(x, 0);
     ctx.lineTo(x, height);
     ctx.stroke();
   }
-  for (let y = GRID_SPACING; y < height; y += GRID_SPACING) {
+  for (let y = offsetY; y < height; y += GRID_SPACING) {
     ctx.beginPath();
     ctx.moveTo(0, y);
     ctx.lineTo(width, y);
@@ -45,8 +51,8 @@ function drawBreadboard(ctx, width, height) {
   }
 
   ctx.fillStyle = COLORS.gridDot;
-  for (let x = GRID_SPACING; x < width; x += GRID_SPACING) {
-    for (let y = GRID_SPACING; y < height; y += GRID_SPACING) {
+  for (let x = offsetX; x < width; x += GRID_SPACING) {
+    for (let y = offsetY; y < height; y += GRID_SPACING) {
       ctx.beginPath();
       ctx.arc(x, y, 1.6, 0, Math.PI * 2);
       ctx.fill();
@@ -54,13 +60,16 @@ function drawBreadboard(ctx, width, height) {
   }
 }
 
-function drawOpticalAxis(ctx, width, axisY, isSnapping) {
+// minWorldX/maxWorldX describe the visible world-space range (which shifts
+// as the camera pans) so the axis and its ruler ticks always span exactly
+// what's on screen, with tick labels reading true world coordinates.
+function drawOpticalAxis(ctx, minWorldX, maxWorldX, axisY, isSnapping) {
   ctx.strokeStyle = isSnapping ? COLORS.selected : COLORS.opticalAxis;
   ctx.lineWidth = isSnapping ? 2 : 1.5;
   ctx.setLineDash([10, 6]);
   ctx.beginPath();
-  ctx.moveTo(0, axisY);
-  ctx.lineTo(width, axisY);
+  ctx.moveTo(minWorldX, axisY);
+  ctx.lineTo(maxWorldX, axisY);
   ctx.stroke();
   ctx.setLineDash([]);
 
@@ -68,17 +77,18 @@ function drawOpticalAxis(ctx, width, axisY, isSnapping) {
   ctx.strokeStyle = 'rgba(255, 210, 63, 0.25)';
   ctx.font = '10px "IBM Plex Mono", monospace';
   ctx.fillStyle = 'rgba(255, 210, 63, 0.45)';
-  for (let x = 0; x < width; x += 50) {
+  const start = Math.floor(minWorldX / 50) * 50;
+  for (let x = start; x < maxWorldX; x += 50) {
     ctx.beginPath();
     ctx.moveTo(x, axisY - 4);
     ctx.lineTo(x, axisY + 4);
     ctx.stroke();
-    if (x % 100 === 0) ctx.fillText(String(x), x + 3, axisY - 7);
+    if (Math.round(x) % 100 === 0) ctx.fillText(String(Math.round(x)), x + 3, axisY - 7);
   }
 
   ctx.font = '11px "IBM Plex Mono", monospace';
   ctx.fillStyle = 'rgba(255, 210, 63, 0.55)';
-  ctx.fillText('optical axis — drag to reposition', 10, axisY - 12);
+  ctx.fillText('optical axis — drag to reposition', minWorldX + 10, axisY - 12);
 }
 
 function drawRayPath(ctx, points, color) {
@@ -210,20 +220,30 @@ function drawRealisticLens(ctx, lens, isSelected) {
   const front = buildSurfaceOutline(s.frontCenter, lens.r1, s.frontVertex, lens.center, tangent, halfHeight, safeHeight);
   const back = buildSurfaceOutline(s.backCenter, lens.r2, s.backVertex, lens.center, tangent, halfHeight, safeHeight);
 
-  // Fill the glass body: front outline bottom-to-top, then back outline
-  // top-to-bottom, forming one closed shape.
-  ctx.beginPath();
-  ctx.moveTo(front[0].x, front[0].y);
-  for (const p of front) ctx.lineTo(p.x, p.y);
-  for (let i = back.length - 1; i >= 0; i--) ctx.lineTo(back[i].x, back[i].y);
-  ctx.closePath();
-  ctx.fillStyle = COLORS.lensFill;
+  // One closed path all the way around — front bottom-to-top, then back
+  // top-to-bottom — used for both the fill and the stroke, so the flat
+  // rim edges at top and bottom get outlined too, not just filled.
+  const traceClosedPath = () => {
+    ctx.beginPath();
+    ctx.moveTo(front[0].x, front[0].y);
+    for (const p of front) ctx.lineTo(p.x, p.y);
+    for (let i = back.length - 1; i >= 0; i--) ctx.lineTo(back[i].x, back[i].y);
+    ctx.closePath();
+  };
+
+  traceClosedPath();
+  const gradient = ctx.createLinearGradient(s.frontVertex.x, s.frontVertex.y, s.backVertex.x, s.backVertex.y);
+  gradient.addColorStop(0, 'rgba(142, 203, 255, 0.03)');
+  gradient.addColorStop(0.5, COLORS.lensFill);
+  gradient.addColorStop(1, 'rgba(142, 203, 255, 0.03)');
+  ctx.fillStyle = gradient;
   ctx.fill();
 
+  traceClosedPath();
   ctx.strokeStyle = isSelected ? COLORS.selected : COLORS.lens;
   ctx.lineWidth = 3;
-  strokeOutline(ctx, front);
-  strokeOutline(ctx, back);
+  ctx.lineJoin = 'round';
+  ctx.stroke();
 
   const f = Optics.effectiveFocalLength(lens, 550);
   if (isFinite(f)) drawFocalTicks(ctx, lens.center, s.axis, Math.abs(f));
@@ -281,13 +301,6 @@ function buildSurfaceOutline(surfaceCenter, radius, vertex, elCenter, tangent, h
   const bottomCorner = Optics.add(elCenter, Optics.scale(tangent, -halfHeight));
   const topCorner = Optics.add(elCenter, Optics.scale(tangent, halfHeight));
   return [bottomCorner, ...arcPoints, topCorner];
-}
-
-function strokeOutline(ctx, points) {
-  ctx.beginPath();
-  ctx.moveTo(points[0].x, points[0].y);
-  for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
-  ctx.stroke();
 }
 
 function drawFocalTicks(ctx, center, axis, f) {
