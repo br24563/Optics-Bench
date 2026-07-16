@@ -18,7 +18,7 @@
     <main class="workspace">
       <div class="canvas-wrap">
         <canvas id="bench"></canvas>
-        <p class="hint">Drag the source, elements, or the optical axis itself. Elements snap onto the axis near it. Click anything to edit it precisely on the right.</p>
+        <p class="hint">Drag empty space to pan the bench. Drag the source, elements, or the axis to move them — elements snap onto the axis near it. Click anything to edit it precisely on the right.</p>
       </div>
 
       <aside class="panel">
@@ -28,6 +28,7 @@
             <button id="add-lens">+ Lens</button>
             <button id="add-mirror">+ Mirror</button>
             <button id="add-prism">+ Prism</button>
+            <button id="reset-view">Reset view</button>
             <button id="delete-selected" class="danger">Delete selected</button>
           </div>
         </section>
@@ -95,6 +96,12 @@
 
           <!-- LENS -->
           <div id="lens-controls" hidden>
+            <label class="field-pair">
+              <span>Aperture height (px)</span>
+              <input type="range" id="el-lens-height" min="40" max="320" step="5" value="150" />
+              <input type="number" id="el-lens-height-num" min="40" max="320" step="5" value="150" />
+            </label>
+
             <label class="field">
               Ray model
               <select id="el-lens-model">

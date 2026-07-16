@@ -68,6 +68,10 @@ html, body {
   cursor: grab;
 }
 
+#bench.panning {
+  cursor: grabbing;
+}
+
 .hint {
   position: absolute;
   bottom: 14px;

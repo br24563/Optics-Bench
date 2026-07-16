@@ -11,6 +11,9 @@ real physics compute every ray bend live.
 
 ## What it does
 
+- **A pannable bench.** Drag empty space to move around the canvas — handy
+  once you've got several elements spread out further than the window.
+  "Reset view" snaps back to the origin if you get lost.
 - **An optical axis you can build on.** A horizontal reference line runs
   across the bench. Drag any element near it and it snaps into alignment —
   drag it away and it's free again. Drag the axis itself to reposition your
@@ -19,7 +22,9 @@ real physics compute every ray bend live.
   graphical construction taught on paper) and a *realistic lens* that traces
   actual Snell's law through two spherical glass surfaces you define by
   radius of curvature, thickness, and glass type — real spherical
-  aberration and all.
+  aberration and all. Aperture height is adjustable on either model, and
+  the two glass surfaces are geometrically guaranteed never to cross each
+  other even at extreme radius/thickness combinations.
 - **Flat, concave, and convex mirrors**, each reflecting correctly with the
   focusing behavior of a real spherical mirror.
 - **A dispersive prism.** Its refractive index depends on wavelength (via
