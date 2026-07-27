@@ -1,0 +1,13 @@
+{
+  "name": "optical-bench",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A draggable, physically-real ray-tracing optics simulator that runs entirely in the browser.",
+  "license": "MIT",
+  "scripts": {
+    "test": "node --test test/"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

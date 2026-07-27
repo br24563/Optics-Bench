@@ -226,6 +226,7 @@ canvas.addEventListener('mousedown', (evt) => {
     dragging = { type: 'pan', startMouse: screenP, startPan: { x: scene.pan.x, y: scene.pan.y } };
     canvas.classList.add('panning');
   }
+  canvas.focus();
   syncPanelToSelection();
   draw();
 });
@@ -263,6 +264,53 @@ window.addEventListener('mouseup', () => {
   dragging = null;
   snapActive = false;
   canvas.classList.remove('panning');
+  draw();
+});
+
+// ---------- keyboard: arrow-key nudge, delete, escape ----------
+// Makes the bench usable without a mouse: Tab to focus the canvas, click
+// (or Tab-cycle in the future) to select something, then arrow keys nudge
+// it the same way a drag would. Hold Shift for a larger step.
+
+const NUDGE_STEP = 5; // mm
+const NUDGE_STEP_FAST = 20; // mm, with Shift held
+
+canvas.addEventListener('keydown', (evt) => {
+  if (evt.key === 'Escape') {
+    selected = null;
+    syncPanelToSelection();
+    draw();
+    return;
+  }
+
+  if (!selected) return;
+
+  if (evt.key === 'Delete' || evt.key === 'Backspace') {
+    if (selected.type === 'element') {
+      evt.preventDefault();
+      document.getElementById('delete-selected').click();
+    }
+    return;
+  }
+
+  let dx = 0, dy = 0;
+  const step = evt.shiftKey ? NUDGE_STEP_FAST : NUDGE_STEP;
+  if (evt.key === 'ArrowLeft') dx = -step;
+  else if (evt.key === 'ArrowRight') dx = step;
+  else if (evt.key === 'ArrowUp') dy = -step;
+  else if (evt.key === 'ArrowDown') dy = step;
+  else return;
+  evt.preventDefault();
+
+  if (selected.type === 'axis') {
+    scene.axisY += dy;
+  } else if (selected.type === 'source') {
+    scene.source.position = { x: scene.source.position.x + dx, y: scene.source.position.y + dy };
+  } else if (selected.type === 'element') {
+    selected.ref.center = { x: selected.ref.center.x + dx, y: selected.ref.center.y + dy };
+    elX.value = Math.round(selected.ref.center.x);
+    elY.value = Math.round(selected.ref.center.y);
+  }
   draw();
 });
 
@@ -502,17 +550,27 @@ function syncPanelToSelection() {
   imageAnalysis.hidden = el.kind !== 'lens';
 }
 
-function formatImageInfo(info) {
+function formatImageInfo(info, spot) {
   if (!info.valid) return info.reason;
+  const lines = [];
   if (info.parallel) {
-    return `Collimated input \u2192 focuses at the focal plane, f = ${Math.round(info.focalLength)}px (${info.real ? 'real' : 'virtual'}).`;
+    lines.push(`Collimated input \u2192 focuses at the focal plane, f = ${Math.round(info.focalLength)}mm (${info.real ? 'real' : 'virtual'}).`);
+  } else {
+    lines.push(`object distance:  ${info.objectDistance.toFixed(0)}mm`);
+    lines.push(`image distance:   ${info.imageDistance.toFixed(0)}mm`);
+    lines.push(`magnification:    ${info.magnification.toFixed(2)}\u00D7`);
+    lines.push(`${info.real ? 'real image' : 'virtual image'}, ${info.inverted ? 'inverted' : 'upright'}`);
   }
-  return [
-    `object distance:  ${info.objectDistance.toFixed(0)}px`,
-    `image distance:   ${info.imageDistance.toFixed(0)}px`,
-    `magnification:    ${info.magnification.toFixed(2)}\u00D7`,
-    `${info.real ? 'real image' : 'virtual image'}, ${info.inverted ? 'inverted' : 'upright'}`,
-  ].join('\n');
+  if (info.airyRadius != null) {
+    lines.push(`diffraction limit:  Airy radius \u2248 ${(info.airyRadius * 1000).toFixed(2)}\u00B5m (1.22 \u03BB \u00D7 working f/#)`);
+  }
+  if (spot) {
+    lines.push(
+      `spherical aberration: RMS spot radius \u2248 ${(spot.rmsRadius * 1000).toFixed(2)}\u00B5m, ` +
+      `peak \u2248 ${(spot.peakRadius * 1000).toFixed(2)}\u00B5m (${spot.sampleCount} rays across the aperture)`
+    );
+  }
+  return lines.join('\n');
 }
 
 function updateReadouts() {
@@ -522,20 +580,21 @@ function updateReadouts() {
   if (el.kind === 'lens') {
     if (el.model === 'ideal') {
       const type = el.focalLength > 0 ? 'converging' : 'diverging';
-      elReadout.textContent = `${type}, f = ${Math.round(el.focalLength)}px`;
+      elReadout.textContent = `${type}, f = ${Math.round(el.focalLength)}mm`;
     } else {
       const n = Optics.lensIndexAt(el, scene.source.wavelength);
       const f = Optics.effectiveFocalLength(el, scene.source.wavelength);
       elReadout.textContent = `n(${scene.source.wavelength}nm) = ${n.toFixed(4)}`;
       document.getElementById('lens-effective-f').textContent =
-        `effective focal length \u2248 ${Math.round(f)}px (thin-lens estimate; the traced rays include real spherical aberration beyond this paraxial value)`;
+        `effective focal length \u2248 ${Math.round(f)}mm (thin-lens estimate; the traced rays include real spherical aberration beyond this paraxial value)`;
     }
     const info = Optics.computeImageInfo(scene.source, el);
-    imageReadout.textContent = formatImageInfo(info);
+    const spot = el.model === 'realistic' ? Optics.computeSpotDiagram(el, scene.source) : null;
+    imageReadout.textContent = formatImageInfo(info, spot);
   } else if (el.kind === 'mirror') {
     elReadout.textContent = el.surface === 'flat'
       ? 'flat mirror'
-      : `${el.surface} mirror, R = ${Math.round(el.radius)}px, f = ${Math.round(el.radius / 2)}px`;
+      : `${el.surface} mirror, R = ${Math.round(el.radius)}mm, f = ${Math.round(el.radius / 2)}mm`;
   } else if (el.kind === 'prism') {
     const n = Optics.prismIndexAt(el, scene.source.wavelength);
     elReadout.textContent = `n(${scene.source.wavelength}nm) = ${n.toFixed(4)}, apex angle ${el.apexAngle}\u00B0`;
@@ -548,7 +607,7 @@ document.getElementById('add-lens').addEventListener('click', () => {
   const el = {
     kind: 'lens', model: 'ideal',
     center: { x: scene.width / 2, y: scene.axisY },
-    angle: 0, height: 150,
+    angle: 0, height: 90,
     focalLength: 140,
     glass: 'crown', customA: 1.50, customB: 0.0042,
     r1: 150, r2: -150, thickness: 30,
@@ -597,6 +656,85 @@ document.getElementById('delete-selected').addEventListener('click', () => {
 document.getElementById('reset-view').addEventListener('click', () => {
   scene.pan = { x: 0, y: 0 };
   draw();
+});
+
+// ---------- scene save/load (JSON) ----------
+// Lets a configuration be shared or reproduced exactly -- save the source
+// and every element as plain JSON, load it back into an identical scene.
+
+const SCENE_FORMAT_VERSION = 1;
+
+function serializeScene() {
+  return {
+    formatVersion: SCENE_FORMAT_VERSION,
+    axisY: scene.axisY,
+    source: scene.source,
+    elements: scene.elements,
+  };
+}
+
+function syncSourcePanelFromScene() {
+  const src = scene.source;
+  sourceModeEl.value = src.mode;
+  spreadRow.hidden = src.mode !== 'point';
+  widthRow.hidden = src.mode !== 'parallel';
+  setPair(rayCountSlider, rayCountNum, src.rayCount);
+  setPair(sourceSpreadSlider, sourceSpreadNum, src.spread);
+  setPair(sourceWidthSlider, sourceWidthNum, src.beamWidth);
+  setPair(document.getElementById('source-angle'), document.getElementById('source-angle-num'), src.angle);
+  setPair(wavelengthSlider, wavelengthNum, src.wavelength);
+  whiteEl.checked = src.whiteLight;
+  whiteEl.dispatchEvent(new Event('change'));
+}
+
+function loadSceneData(data) {
+  if (!data || typeof data !== 'object' || !Array.isArray(data.elements) || typeof data.source !== 'object') {
+    throw new Error('That file doesn’t look like a saved optical-bench scene.');
+  }
+  scene.source = Object.assign({}, scene.source, data.source);
+  scene.elements = data.elements;
+  if (typeof data.axisY === 'number') scene.axisY = data.axisY;
+  selected = null;
+  syncSourcePanelFromScene();
+  syncPanelToSelection();
+  draw();
+}
+
+const sceneIoStatus = document.getElementById('scene-io-status');
+function showSceneIoStatus(message, isError) {
+  sceneIoStatus.hidden = false;
+  sceneIoStatus.textContent = message;
+  sceneIoStatus.style.color = isError ? 'var(--accent)' : 'var(--accent-2)';
+}
+
+document.getElementById('save-scene').addEventListener('click', () => {
+  const json = JSON.stringify(serializeScene(), null, 2);
+  const blob = new Blob([json], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'optical-bench-scene.json';
+  a.click();
+  URL.revokeObjectURL(url);
+  showSceneIoStatus('Scene saved.');
+});
+
+const loadSceneFileInput = document.getElementById('load-scene-file');
+document.getElementById('load-scene').addEventListener('click', () => loadSceneFileInput.click());
+loadSceneFileInput.addEventListener('change', () => {
+  const file = loadSceneFileInput.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      loadSceneData(JSON.parse(reader.result));
+      showSceneIoStatus(`Loaded "${file.name}".`);
+    } catch (err) {
+      showSceneIoStatus(err.message || 'Could not load that file.', true);
+    }
+  };
+  reader.readAsText(file);
+  loadSceneFileInput.value = '';
 });
 
 // ---------- init ----------

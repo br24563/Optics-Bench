@@ -82,6 +82,31 @@ function intersectCircle(origin, dir, center, radius) {
   return { t, point: add(origin, scale(dir, t)) };
 }
 
+// A lens surface is only physically the *near* hemisphere of its curvature
+// sphere -- the half facing the vertex. The sphere's radius is typically
+// much larger than the lens thickness (as with any real lens), so its far
+// hemisphere extends well past the lens body, often back through the space
+// where a point source sits. A plain nearest-t circle intersection (as
+// `intersectCircle` does) can't tell the two hemispheres apart and will
+// happily report a ray "hitting" that phantom far side as if it were glass.
+// This restricts candidates to the hemisphere containing `vertex` before
+// picking the nearest one, so only the real surface can ever be hit.
+function intersectSphereHemisphere(origin, dir, center, radius, vertex) {
+  const oc = sub(origin, center);
+  const b = 2 * dot(dir, oc);
+  const c = dot(oc, oc) - radius * radius;
+  const disc = b * b - 4 * c;
+  if (disc < 0) return null;
+  const sq = Math.sqrt(disc);
+  const vertexDir = normalize(sub(vertex, center));
+  const candidates = [(-b - sq) / 2, (-b + sq) / 2]
+    .filter((t) => t > 1e-6)
+    .map((t) => ({ t, point: add(origin, scale(dir, t)) }))
+    .filter((hit) => dot(sub(hit.point, center), vertexDir) > 0)
+    .sort((a, b2) => a.t - b2.t);
+  return candidates.length ? candidates[0] : null;
+}
+
 function intersectBounds(origin, dir, minX, minY, maxX, maxY) {
   const candidates = [];
   const edges = [
@@ -106,9 +131,18 @@ function reflect(dir, normal) {
   return normalize(sub(dir, scale(normal, 2 * d)));
 }
 
-// Vector form of Snell's law. Returns the refracted direction, or null on
-// total internal reflection. `normal` need not be pre-oriented against `dir`
-// — this flips it automatically.
+/**
+ * Vector form of Snell's law, n1 sin(theta1) = n2 sin(theta2), solved
+ * directly as a vector equation rather than a small-angle (paraxial)
+ * approximation (Hecht, "Optics", 5th ed., Eq. 4.55-4.57; Glassner (ed.),
+ * "An Introduction to Ray Tracing", Sec. 1.2). `normal` need not be
+ * pre-oriented against `dir` — this flips it automatically.
+ * @param {{x:number,y:number}} dir unit incident direction
+ * @param {{x:number,y:number}} normal surface normal (either orientation)
+ * @param {number} n1 incident-side refractive index
+ * @param {number} n2 transmitted-side refractive index
+ * @returns {{x:number,y:number}|null} unit refracted direction, or null on total internal reflection
+ */
 function refractVector(dir, normal, n1, n2) {
   let nrm = normal;
   let cosI = -dot(nrm, dir);
@@ -120,9 +154,18 @@ function refractVector(dir, normal, n1, n2) {
   return normalize(add(scale(dir, eta), scale(nrm, eta * cosI - cosT)));
 }
 
-// Thin-lens graphical construction (see README for the reasoning): the ray
-// through the optical center is undeviated, so every ray parallel to it must
-// bend to cross the same point on the focal plane.
+/**
+ * Thin-lens graphical (ray-tracing) construction (Hecht, "Optics", 5th ed.,
+ * Sec. 5.2, "principal rays"): the ray through the optical center is
+ * undeviated, so every ray parallel to it must bend to cross the same
+ * point on the focal plane. Generalized here to a lens at any
+ * position/orientation and a ray at any angle, not just rays along one
+ * fixed horizontal axis.
+ * @param {{x:number,y:number}} point where the ray meets the lens plane
+ * @param {{x:number,y:number}} dir unit incident direction
+ * @param {{center:{x:number,y:number}, angle:number, focalLength:number}} lensLike
+ * @returns {{x:number,y:number}} unit refracted direction
+ */
 function refractThinLens(point, dir, lensLike) {
   const axis = fromAngle(lensLike.angle);
   const nSigned = dot(axis, dir) >= 0 ? axis : scale(axis, -1);
@@ -138,9 +181,12 @@ function refractThinLens(point, dir, lensLike) {
 }
 
 // ---------- dispersion ----------
-// Cauchy's equation: n(λ) = A + B / λ² (λ in micrometers). Rough presets;
-// not lab-grade glass data, but the right shape and the right idea: blue
-// bends more than red because n(λ) rises toward shorter wavelengths.
+// Cauchy's equation (Cauchy, 1836; see Hecht, "Optics", 5th ed., Eq. 3.71):
+// n(λ) = A + B/λ² (λ in micrometers). A two-term empirical fit to normal
+// dispersion, accurate away from absorption bands for ordinary optical
+// glass. Rough presets below; not lab-grade glass data, but the right
+// shape and the right idea: blue bends more than red because n(λ) rises
+// toward shorter wavelengths.
 const GLASS_PRESETS = {
   // Real BK7/flint dispersion is genuinely subtle — under a degree of
   // spread across the whole visible spectrum — which is invisible at
@@ -152,6 +198,13 @@ const GLASS_PRESETS = {
   flint: { label: 'Flint glass, n\u2248 1.62', A: 1.6034, B: 0.0500 },
 };
 
+/**
+ * Cauchy's equation, n(λ) = A + B/λ².
+ * @param {number} A Cauchy A coefficient (dimensionless)
+ * @param {number} B Cauchy B coefficient (µm²)
+ * @param {number} wavelengthNm wavelength in nanometers
+ * @returns {number} refractive index at that wavelength
+ */
 function cauchyIndex(A, B, wavelengthNm) {
   const lambdaUm = wavelengthNm / 1000;
   return A + B / (lambdaUm * lambdaUm);
@@ -172,23 +225,38 @@ function wavelengthToRGB(nm) {
 }
 
 // ---------- realistic (Snell's law) lens geometry ----------
-// Sign convention (standard lensmaker convention): a surface radius is
-// positive if its center of curvature lies on the outgoing side of that
-// surface. A biconvex lens is R1 > 0, R2 < 0.
+// Sign convention (standard lensmaker/Cartesian convention, e.g. Hecht,
+// "Optics", 5th ed., Sec. 5.2): a surface radius is positive if its center
+// of curvature lies on the outgoing side of that surface. A biconvex lens
+// is R1 > 0, R2 < 0.
+
+// A radius of exactly zero isn't a physical surface at all (it degenerates
+// the sphere to a single point, which a ray will essentially never hit) --
+// the UI's R1/R2 sliders pass straight through 0 at their step size, so
+// this is easy to reach by accident. A flat surface is the *infinite*-radius
+// limit, not the zero-radius one; clamp away from zero instead of silently
+// producing a surface no ray can ever strike.
+const MIN_LENS_RADIUS = 1;
+function clampLensRadius(r) {
+  if (Math.abs(r) >= MIN_LENS_RADIUS) return r;
+  return r < 0 ? -MIN_LENS_RADIUS : MIN_LENS_RADIUS;
+}
 
 function buildLensSurfaces(lens) {
   const axis = fromAngle(lens.angle);
   const half = lens.thickness / 2;
+  const r1 = clampLensRadius(lens.r1);
+  const r2 = clampLensRadius(lens.r2);
   const frontVertex = sub(lens.center, scale(axis, half));
   const backVertex = add(lens.center, scale(axis, half));
   return {
     axis,
     frontVertex,
     backVertex,
-    frontCenter: add(frontVertex, scale(axis, lens.r1)),
-    backCenter: add(backVertex, scale(axis, lens.r2)),
-    frontRadius: Math.abs(lens.r1),
-    backRadius: Math.abs(lens.r2),
+    frontCenter: add(frontVertex, scale(axis, r1)),
+    backCenter: add(backVertex, scale(axis, r2)),
+    frontRadius: Math.abs(r1),
+    backRadius: Math.abs(r2),
   };
 }
 
@@ -199,13 +267,24 @@ function lensIndexAt(lens, wavelengthNm) {
   return cauchyIndex(A, B, wavelengthNm);
 }
 
-// Thin-lens-equivalent focal length, used for the ideal-mode ray tracing AND
-// as the paraxial estimate shown in the image-formation readout for
-// realistic-mode lenses (lensmaker's equation, thin-lens approximation).
+/**
+ * Thin-lens-equivalent focal length. For an ideal lens this is just the
+ * stored value; for a realistic lens it's the lensmaker's equation,
+ * 1/f = (n-1)(1/R1 - 1/R2) (Hecht, "Optics", 5th ed., Eq. 5.14, thin-lens
+ * limit), used both to drive the ideal-mode ray tracing and as the
+ * paraxial estimate shown in the image-formation readout for
+ * realistic-mode lenses (whose traced rays include real aberration beyond
+ * this paraxial value).
+ * @param {object} lens
+ * @param {number} [wavelengthNm] wavelength in nanometers (realistic lenses only; defaults to 550nm)
+ * @returns {number} focal length in world units (mm), or Infinity if the lens has no optical power
+ */
 function effectiveFocalLength(lens, wavelengthNm) {
   if (lens.model === 'ideal') return lens.focalLength;
   const n = lensIndexAt(lens, wavelengthNm || 550);
-  const invF = (n - 1) * (1 / lens.r1 - 1 / lens.r2);
+  const r1 = clampLensRadius(lens.r1);
+  const r2 = clampLensRadius(lens.r2);
+  const invF = (n - 1) * (1 / r1 - 1 / r2);
   return Math.abs(invF) < 1e-9 ? Infinity : 1 / invF;
 }
 
@@ -215,11 +294,11 @@ function findRealisticLensHit(lens, origin, dir) {
   const halfHeight = lens.height / 2;
   const candidates = [];
 
-  const hitFront = intersectCircle(origin, dir, s.frontCenter, s.frontRadius);
+  const hitFront = intersectSphereHemisphere(origin, dir, s.frontCenter, s.frontRadius, s.frontVertex);
   if (hitFront && withinAperture(hitFront.point, lens.center, tangent, halfHeight)) {
     candidates.push({ t: hitFront.t, point: hitFront.point, surface: 'front' });
   }
-  const hitBack = intersectCircle(origin, dir, s.backCenter, s.backRadius);
+  const hitBack = intersectSphereHemisphere(origin, dir, s.backCenter, s.backRadius, s.backVertex);
   if (hitBack && withinAperture(hitBack.point, lens.center, tangent, halfHeight)) {
     candidates.push({ t: hitBack.t, point: hitBack.point, surface: 'back' });
   }
@@ -247,7 +326,8 @@ function propagateRealisticLens(lens, origin, dir, hit, wavelengthNm) {
   const exitSurface = entrySurface === 'front' ? 'back' : 'front';
   const exitCenter = exitSurface === 'front' ? s.frontCenter : s.backCenter;
   const exitRadius = exitSurface === 'front' ? s.frontRadius : s.backRadius;
-  const exitHit = intersectCircle(hit.point, dirInside, exitCenter, exitRadius);
+  const exitVertex = exitSurface === 'front' ? s.frontVertex : s.backVertex;
+  const exitHit = intersectSphereHemisphere(hit.point, dirInside, exitCenter, exitRadius, exitVertex);
 
   if (!exitHit || !withinAperture(exitHit.point, lens.center, tangent, halfHeight)) {
     // Ray misses the far surface within the clear aperture (grazing edge
@@ -266,6 +346,128 @@ function propagateRealisticLens(lens, origin, dir, hit, wavelengthNm) {
     };
   }
   return { points: [hit.point, exitHit.point], exitPoint: exitHit.point, exitDir: dirOut };
+}
+
+// ---------- image-quality analysis ----------
+// The bench treats one world unit as 1mm (see README "Units"), so a
+// wavelength in nanometers and a lens dimension in world units combine into
+// a physically meaningful, dimensionally-correct spot size in micrometers.
+
+// Diffraction-limited (Airy disk) spot radius: r = 1.22 * lambda * (working
+// f-number), the standard result for the first dark ring of a circular
+// aperture's Fraunhofer diffraction pattern (Hecht, "Optics", 5th ed.,
+// Sec. 10.2.5; Born & Wolf, "Principles of Optics", 7th ed., Sec. 8.5.2).
+// Uses the *working* f-number (actual image/object distance over aperture),
+// not the infinite-conjugate f-number, so it stays correct for finite
+// conjugates, not just collimated input.
+function airyDiskRadius(wavelengthNm, workingDistance, apertureDiameter) {
+  if (!(apertureDiameter > 0) || !isFinite(workingDistance)) return null;
+  const wavelengthMm = wavelengthNm / 1e6; // nm -> mm (1 world unit)
+  const workingFNumber = Math.abs(workingDistance) / apertureDiameter;
+  return 1.22 * wavelengthMm * workingFNumber;
+}
+
+// Real-ray spot diagram for a realistic (Snell's-law) lens: traces a fan of
+// rays spanning the clear aperture through the *actual* spherical surfaces,
+// then finds where each one crosses the paraxial image plane. Their spread
+// there is genuine transverse spherical aberration -- rays through the edge
+// of the aperture focus short of paraxial rays through the center, exactly
+// as in a real lens -- and is reported as an RMS spot radius, directly
+// comparable to `airyDiskRadius` above to see whether a configuration is
+// diffraction-limited or aberration-limited.
+//
+// The paraxial image plane is found by tracing an actual near-axis ray
+// through the *real* thick-lens surfaces, rather than by placing it at the
+// thin-lens focal length measured from the lens's geometric center. For a
+// lens with non-negligible thickness those two disagree -- the true
+// paraxial focus sits at a principal-plane-shifted position, not at
+// `lens.center + f`. Using the thin-lens estimate as the reference plane
+// would inject a spurious defocus that scales *linearly* with aperture
+// height and swamps the much smaller (cubic-in-height) spherical
+// aberration this function exists to measure. Self-referencing against a
+// traced ray sidesteps needing a separate thick-lens principal-plane
+// formula and stays exact for any thickness/curvature combination.
+//
+// Only valid when the beam travels along the lens's own optical axis (the
+// common on-axis case this bench is built around) and forms a real image;
+// returns null otherwise rather than reporting a misleading number.
+function computeSpotDiagram(lens, source, sampleCount) {
+  if (lens.model !== 'realistic') return null;
+  sampleCount = sampleCount || 21;
+
+  const axis = fromAngle(lens.angle);
+  const tangent = { x: -axis.y, y: axis.x };
+  const halfHeight = lens.height / 2;
+  const wavelengthNm = source.wavelength || 550;
+
+  const f = effectiveFocalLength(lens, wavelengthNm);
+  if (!isFinite(f)) return null;
+
+  let beamDir;
+  let approxPlaneDistance; // coarse validity gate only -- not the measurement plane
+  if (source.mode === 'parallel') {
+    beamDir = fromAngle((source.angle * Math.PI) / 180);
+    approxPlaneDistance = f;
+  } else {
+    beamDir = normalize(sub(lens.center, source.position));
+    const doDist = Math.abs(dot(sub(source.position, lens.center), axis));
+    if (doDist < 1e-6 || Math.abs(doDist - f) < 0.5) return null;
+    approxPlaneDistance = (f * doDist) / (doDist - f);
+  }
+  if (!isFinite(approxPlaneDistance) || approxPlaneDistance <= 0) return null; // real image only
+  if (Math.abs(dot(axis, beamDir)) < 0.98) return null; // beam not aligned with this lens's axis
+
+  // Traces one ray of a given transverse aperture offset through the lens
+  // and returns its exit point/direction, or null if it misses/TIRs.
+  function traceOffset(offset) {
+    const aimPoint = add(lens.center, scale(tangent, offset));
+    let origin, dir;
+    if (source.mode === 'parallel') {
+      dir = beamDir;
+      origin = sub(aimPoint, scale(dir, Math.max(1000, lens.thickness * 10)));
+    } else {
+      origin = source.position;
+      dir = normalize(sub(aimPoint, origin));
+    }
+    const hit = findRealisticLensHit(lens, origin, dir);
+    if (!hit) return null;
+    const result = propagateRealisticLens(lens, origin, dir, hit, wavelengthNm);
+    return result;
+  }
+
+  const paraxialOffset = Math.min(0.05, halfHeight * 0.01) || 0.05;
+  const paraxial = traceOffset(paraxialOffset);
+  if (!paraxial) return null;
+  const paraxialSlope = dot(paraxial.exitDir, tangent);
+  if (Math.abs(paraxialSlope) < 1e-12) return null; // no optical power
+  const paraxialTangentialAtExit = dot(sub(paraxial.exitPoint, lens.center), tangent);
+  const sToAxis = -paraxialTangentialAtExit / paraxialSlope;
+  const planeDistance = dot(sub(paraxial.exitPoint, lens.center), axis) + sToAxis * dot(paraxial.exitDir, axis);
+  if (!isFinite(planeDistance) || planeDistance <= 0) return null;
+
+  const margin = 0.92; // stay slightly inside the physical aperture edge
+  const heights = [];
+  for (let i = 0; i < sampleCount; i++) {
+    const t = sampleCount === 1 ? 0 : (i / (sampleCount - 1)) * 2 - 1; // -1..1
+    const offset = t * halfHeight * margin;
+    const result = traceOffset(offset);
+    if (!result) continue;
+
+    const denom = dot(result.exitDir, axis);
+    if (Math.abs(denom) < 1e-9) continue;
+    const s = (planeDistance - dot(sub(result.exitPoint, lens.center), axis)) / denom;
+    if (s < 0) continue;
+    const landing = add(result.exitPoint, scale(result.exitDir, s));
+    heights.push(dot(sub(landing, lens.center), tangent));
+  }
+
+  if (heights.length < 2) return null;
+  // Deviation from the *paraxial* image point (tangential coordinate 0 at
+  // this plane, by construction), not from the sampled rays' own mean --
+  // the paraxial ray defines where a perfect image would form.
+  const rmsRadius = Math.sqrt(heights.reduce((a, h) => a + h * h, 0) / heights.length);
+  const peakRadius = Math.max(...heights.map((h) => Math.abs(h)));
+  return { rmsRadius, peakRadius, sampleCount: heights.length };
 }
 
 // ---------- prism geometry ----------
@@ -364,10 +566,17 @@ function propagatePrism(prism, origin, dir, hit, wavelengthNm) {
 }
 
 // ---------- mirror curvature ----------
-// A curved mirror is modeled as a flat reflection followed by the same
-// thin-element focusing correction used for lenses, with f = R/2 — a
-// standard equivalence for paraxial spherical mirrors. Flat mirrors skip
-// the correction entirely.
+/**
+ * A curved mirror is modeled as a flat reflection followed by the same
+ * thin-element focusing correction used for lenses, with f = R/2 — the
+ * standard paraxial mirror equation (Hecht, "Optics", 5th ed., Eq. 5.24,
+ * with the sign convention 1/do + 1/di = 2/R = 1/f). Flat mirrors skip the
+ * correction entirely.
+ * @param {{x:number,y:number}} point where the ray meets the mirror
+ * @param {{x:number,y:number}} reflectedDir the already flat-reflected direction
+ * @param {{center:object, angle:number, surface:string, radius:number}} mirror
+ * @returns {{x:number,y:number}} the final (possibly curvature-corrected) direction
+ */
 function applyMirrorCurvature(point, reflectedDir, mirror) {
   if (mirror.surface === 'flat') return reflectedDir;
   const sign = mirror.surface === 'concave' ? 1 : -1;
@@ -439,6 +648,15 @@ function traceRay(origin, dir, elements, viewport, wavelengthNm = 550, maxBounce
 
 // ---------- image-formation analysis ----------
 
+/**
+ * Classic thin-lens image formation: 1/do + 1/di = 1/f, m = -di/do (Hecht,
+ * "Optics", 5th ed., Eqs. 5.15-5.16), evaluated with the lens's paraxial
+ * `effectiveFocalLength`. Also reports the diffraction-limited Airy radius
+ * for the resulting image (see `airyDiskRadius`).
+ * @param {{position:object, mode:string, wavelength:number}} source
+ * @param {object} lens
+ * @returns {object} `{valid:false, reason}` or a populated image-formation result
+ */
 function computeImageInfo(source, lens) {
   const axis = fromAngle(lens.angle);
   const f = effectiveFocalLength(lens, source.wavelength);
@@ -448,6 +666,7 @@ function computeImageInfo(source, lens) {
     return {
       valid: true, parallel: true, focalLength: f,
       real: f > 0, virtual: f < 0,
+      airyRadius: airyDiskRadius(source.wavelength, f, lens.height),
     };
   }
 
@@ -467,6 +686,7 @@ function computeImageInfo(source, lens) {
     real: di > 0, virtual: di <= 0,
     inverted: m < 0, upright: m >= 0,
     focalLength: f,
+    airyRadius: airyDiskRadius(source.wavelength, di, lens.height),
   };
 }
 
@@ -474,11 +694,11 @@ function computeImageInfo(source, lens) {
 window.Optics = {
   sub, add, scale, dot, length, normalize, fromAngle, rotate,
   elementEndpoints, withinAperture,
-  intersectSegment, intersectCircle, intersectBounds,
+  intersectSegment, intersectCircle, intersectSphereHemisphere, intersectBounds,
   reflect, refractVector, refractThinLens, applyMirrorCurvature,
   GLASS_PRESETS, cauchyIndex, wavelengthToRGB,
   buildLensSurfaces, lensIndexAt, effectiveFocalLength,
   buildPrismFaces, prismIndexAt,
   findElementHit, propagateElement, traceRay,
-  computeImageInfo,
+  computeImageInfo, airyDiskRadius, computeSpotDiagram,
 };

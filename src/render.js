@@ -73,7 +73,8 @@ function drawOpticalAxis(ctx, minWorldX, maxWorldX, axisY, isSnapping) {
   ctx.stroke();
   ctx.setLineDash([]);
 
-  // Ruler ticks every 50px so drag distances have a visual reference.
+  // Ruler ticks every 50mm (the bench treats 1 world unit as 1mm — see
+  // README "Units" section) so drag distances have a physical reference.
   ctx.strokeStyle = 'rgba(255, 210, 63, 0.25)';
   ctx.font = '10px "IBM Plex Mono", monospace';
   ctx.fillStyle = 'rgba(255, 210, 63, 0.45)';
@@ -83,12 +84,12 @@ function drawOpticalAxis(ctx, minWorldX, maxWorldX, axisY, isSnapping) {
     ctx.moveTo(x, axisY - 4);
     ctx.lineTo(x, axisY + 4);
     ctx.stroke();
-    if (Math.round(x) % 100 === 0) ctx.fillText(String(Math.round(x)), x + 3, axisY - 7);
+    if (Math.round(x) % 100 === 0) ctx.fillText(`${Math.round(x)}mm`, x + 3, axisY - 7);
   }
 
   ctx.font = '11px "IBM Plex Mono", monospace';
   ctx.fillStyle = 'rgba(255, 210, 63, 0.55)';
-  ctx.fillText('optical axis — drag to reposition', minWorldX + 10, axisY - 12);
+  ctx.fillText('optical axis — drag to reposition (1 unit = 1mm)', minWorldX + 10, axisY - 12);
 }
 
 function drawRayPath(ctx, points, color) {
@@ -174,7 +175,7 @@ function drawIdealLens(ctx, lens, isSelected) {
   drawLensArrow(ctx, bottom, bottomDir, color);
 
   drawFocalTicks(ctx, lens.center, axis, Math.abs(lens.focalLength));
-  drawLabel(ctx, lens.center, axis, `f = ${lens.focalLength > 0 ? '+' : ''}${Math.round(lens.focalLength)}px`, -18);
+  drawLabel(ctx, lens.center, axis, `f = ${lens.focalLength > 0 ? '+' : ''}${Math.round(lens.focalLength)}mm`, -18);
 }
 
 function drawLensArrow(ctx, from, dir, color) {
@@ -344,7 +345,7 @@ function drawMirror(ctx, mirror, isSelected) {
   ctx.stroke();
 
   drawAxisLine(ctx, mirror);
-  const label = mirror.surface === 'flat' ? 'flat mirror' : `${mirror.surface} mirror, R = ${Math.round(mirror.radius)}px`;
+  const label = mirror.surface === 'flat' ? 'flat mirror' : `${mirror.surface} mirror, R = ${Math.round(mirror.radius)}mm`;
   drawLabel(ctx, mirror.center, axis, label);
 }
 
