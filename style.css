@@ -308,6 +308,14 @@ button.danger:hover { border-color: var(--accent); color: var(--accent); }
 
 @media (max-width: 760px) {
   .workspace { flex-direction: column; }
-  .panel { width: 100%; border-left: none; border-top: 1px solid var(--line); }
-  .canvas-wrap { height: 60vh; }
+  /* In row layout (desktop) flex-shrink:0 correctly keeps the panel at a
+     fixed width while canvas-wrap absorbs remaining space. In column
+     layout that same flex-shrink:0 has no height constraint to shrink
+     against, so the panel silently overflows past its allotted space
+     instead of scrolling -- override it to a proper flexible, shrinkable
+     column item (min-height:0 is required for it to shrink below its
+     content size at all) so overflow-y:auto can actually do its job here
+     too. */
+  .panel { width: 100%; flex: 1 1 0; min-height: 0; border-left: none; border-top: 1px solid var(--line); }
+  .canvas-wrap { height: 60vh; flex: none; }
 }
