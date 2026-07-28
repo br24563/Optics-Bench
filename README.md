@@ -19,9 +19,12 @@ tool like Zemax OpticStudio shows for a single-element system.
 
 ## What it does
 
-- **A pannable bench.** Drag empty space to move around the canvas — handy
-  once you've got several elements spread out further than the window.
-  "Reset view" snaps back to the origin if you get lost.
+- **A pannable, zoomable bench.** Drag empty space to move around the
+  canvas, and scroll (or the +/− buttons, or the +/− keys) to zoom in and
+  out, centered on the cursor — handy once you've got several elements
+  spread out further than the window, or want to see fine ray-bending
+  detail up close. "Reset view" snaps back to the origin at 100% zoom if
+  you get lost.
 - **An optical axis you can build on.** A horizontal reference line runs
   across the bench. Drag any element near it and it snaps into alignment —
   drag it away and it's free again. Drag the axis itself to reposition your

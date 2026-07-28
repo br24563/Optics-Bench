@@ -17,8 +17,8 @@
 
     <main class="workspace">
       <div class="canvas-wrap">
-        <canvas id="bench" tabindex="0" role="application" aria-label="Optical bench canvas. Click the source, an element, or the optical axis to select it. Use arrow keys to nudge the selection, Delete to remove an element, Escape to deselect."></canvas>
-        <p class="hint">Drag empty space to pan the bench. Drag the source, elements, or the axis to move them — elements snap onto the axis near it. Click anything to edit it precisely on the right, or use arrow keys to nudge the current selection (hold Shift to move faster).</p>
+        <canvas id="bench" tabindex="0" role="application" aria-label="Optical bench canvas. Click the source, an element, or the optical axis to select it. Use arrow keys to nudge the selection, Delete to remove an element, Escape to deselect. Scroll or use +/- to zoom."></canvas>
+        <p class="hint">Drag empty space to pan the bench, scroll (or +/−) to zoom. Drag the source, elements, or the axis to move them — elements snap onto the axis near it. Click anything to edit it precisely on the right, or use arrow keys to nudge the current selection (hold Shift to move faster).</p>
       </div>
 
       <aside class="panel">
@@ -30,6 +30,11 @@
             <button id="add-prism">+ Prism</button>
             <button id="reset-view">Reset view</button>
             <button id="delete-selected" class="danger">Delete selected</button>
+          </div>
+          <div class="toolbar" style="margin-top: 8px;">
+            <button id="zoom-out" title="Zoom out" aria-label="Zoom out">−</button>
+            <span class="zoom-readout" id="zoom-readout">100%</span>
+            <button id="zoom-in" title="Zoom in" aria-label="Zoom in">+</button>
           </div>
           <div class="toolbar" style="margin-top: 8px;">
             <button id="save-scene">Save scene…</button>

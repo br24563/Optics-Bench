@@ -4,8 +4,8 @@
     {
       "name": "optics-bench",
       "runtimeExecutable": "python",
-      "runtimeArgs": ["-m", "http.server", "8748"],
-      "port": 8748
+      "runtimeArgs": ["-m", "http.server", "8749"],
+      "port": 8749
     }
   ]
 }

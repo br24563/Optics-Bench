@@ -25,25 +25,29 @@ const COLORS = {
 
 const GRID_SPACING = 28;
 
-function drawBreadboard(ctx, width, height, panX = 0, panY = 0) {
+function drawBreadboard(ctx, width, height, panX = 0, panY = 0, zoom = 1) {
   ctx.fillStyle = COLORS.bg;
   ctx.fillRect(0, 0, width, height);
 
   // The grid is drawn in screen space (cheap, always fills the canvas) but
-  // offset by the pan so it reads as a fixed world-space pattern scrolling
-  // underneath a moving viewport, rather than a static screen overlay.
-  const offsetX = ((panX % GRID_SPACING) + GRID_SPACING) % GRID_SPACING;
-  const offsetY = ((panY % GRID_SPACING) + GRID_SPACING) % GRID_SPACING;
+  // offset by the pan and scaled by the zoom so it reads as a fixed
+  // world-space pattern scrolling/scaling underneath a moving, zooming
+  // viewport, rather than a static screen overlay.
+  const spacing = GRID_SPACING * zoom;
+  if (spacing < 6) return; // too dense to read -- just show the background
+
+  const offsetX = ((panX % spacing) + spacing) % spacing;
+  const offsetY = ((panY % spacing) + spacing) % spacing;
 
   ctx.strokeStyle = COLORS.grid;
   ctx.lineWidth = 1;
-  for (let x = offsetX; x < width; x += GRID_SPACING) {
+  for (let x = offsetX; x < width; x += spacing) {
     ctx.beginPath();
     ctx.moveTo(x, 0);
     ctx.lineTo(x, height);
     ctx.stroke();
   }
-  for (let y = offsetY; y < height; y += GRID_SPACING) {
+  for (let y = offsetY; y < height; y += spacing) {
     ctx.beginPath();
     ctx.moveTo(0, y);
     ctx.lineTo(width, y);
@@ -51,10 +55,11 @@ function drawBreadboard(ctx, width, height, panX = 0, panY = 0) {
   }
 
   ctx.fillStyle = COLORS.gridDot;
-  for (let x = offsetX; x < width; x += GRID_SPACING) {
-    for (let y = offsetY; y < height; y += GRID_SPACING) {
+  const dotRadius = Math.max(0.8, 1.6 * zoom);
+  for (let x = offsetX; x < width; x += spacing) {
+    for (let y = offsetY; y < height; y += spacing) {
       ctx.beginPath();
-      ctx.arc(x, y, 1.6, 0, Math.PI * 2);
+      ctx.arc(x, y, dotRadius, 0, Math.PI * 2);
       ctx.fill();
     }
   }
@@ -152,6 +157,14 @@ function drawLens(ctx, lens, isSelected) {
 // end. Converging (f > 0) lenses flare their arrowheads outward; diverging
 // (f < 0) lenses point them inward — the same convention used in optics
 // textbooks, so the symbol itself tells you the lens type at a glance.
+//
+// Both cases draw the little stem+arrowhead entirely *outside* the
+// aperture line, in the space beyond `top`/`bottom` — only the direction
+// the arrowhead points (outward for converging, inward for diverging)
+// differs. That keeps the arrow's tip anchored right at the true aperture
+// edge in both cases, rather than a diverging lens's inward-pointing
+// arrow retracing into the middle of the lens body (visibly so for a
+// short aperture, since the stem+head span is a fixed pixel length).
 function drawIdealLens(ctx, lens, isSelected) {
   const axis = Optics.fromAngle(lens.angle);
   const tangent = { x: -axis.y, y: axis.x };
@@ -169,18 +182,31 @@ function drawIdealLens(ctx, lens, isSelected) {
   ctx.lineTo(bottom.x, bottom.y);
   ctx.stroke();
 
-  const topDir = converging ? tangent : Optics.scale(tangent, -1);
-  const bottomDir = converging ? Optics.scale(tangent, -1) : tangent;
-  drawLensArrow(ctx, top, topDir, color);
-  drawLensArrow(ctx, bottom, bottomDir, color);
+  const topOutward = tangent;
+  const bottomOutward = Optics.scale(tangent, -1);
+  const arrowSpan = LENS_ARROW_STEM + LENS_ARROW_HEAD;
+
+  if (converging) {
+    // Base sits at the edge; the arrow flares outward from there.
+    drawLensArrow(ctx, top, topOutward, color);
+    drawLensArrow(ctx, bottom, bottomOutward, color);
+  } else {
+    // Base sits one arrow-span *beyond* the edge; the arrow points inward
+    // so its tip lands back exactly on the edge.
+    drawLensArrow(ctx, Optics.add(top, Optics.scale(topOutward, arrowSpan)), Optics.scale(topOutward, -1), color);
+    drawLensArrow(ctx, Optics.add(bottom, Optics.scale(bottomOutward, arrowSpan)), Optics.scale(bottomOutward, -1), color);
+  }
 
   drawFocalTicks(ctx, lens.center, axis, Math.abs(lens.focalLength));
   drawLabel(ctx, lens.center, axis, `f = ${lens.focalLength > 0 ? '+' : ''}${Math.round(lens.focalLength)}mm`, -18);
 }
 
+const LENS_ARROW_STEM = 10;
+const LENS_ARROW_HEAD = 9;
+
 function drawLensArrow(ctx, from, dir, color) {
-  const stemLen = 10;
-  const headLen = 9;
+  const stemLen = LENS_ARROW_STEM;
+  const headLen = LENS_ARROW_HEAD;
   const headWidth = 8;
   const stemEnd = Optics.add(from, Optics.scale(dir, stemLen));
   const tip = Optics.add(stemEnd, Optics.scale(dir, headLen));

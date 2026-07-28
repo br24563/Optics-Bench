@@ -9,12 +9,16 @@ const ctx = canvas.getContext('2d');
 
 const SNAP_PX = 14;
 const WHITE_LIGHT_SAMPLES = [420, 460, 500, 540, 580, 620, 660];
+const MIN_ZOOM = 0.2;
+const MAX_ZOOM = 6;
+const ZOOM_STEP = 1.15;
 
 const scene = {
   width: 0,
   height: 0,
   axisY: 0,
   pan: { x: 0, y: 0 },
+  zoom: 1,
   source: {
     position: { x: 90, y: 0 },
     mode: 'point',
@@ -130,14 +134,20 @@ function generateRays(source) {
 // ---------- draw ----------
 
 function draw() {
-  Render.drawBreadboard(ctx, scene.width, scene.height, scene.pan.x, scene.pan.y);
+  Render.drawBreadboard(ctx, scene.width, scene.height, scene.pan.x, scene.pan.y, scene.zoom);
 
-  const viewMinX = -scene.pan.x;
-  const viewMinY = -scene.pan.y;
-  const viewport = { minX: viewMinX, minY: viewMinY, maxX: viewMinX + scene.width, maxY: viewMinY + scene.height };
+  const viewMinX = -scene.pan.x / scene.zoom;
+  const viewMinY = -scene.pan.y / scene.zoom;
+  const viewport = {
+    minX: viewMinX,
+    minY: viewMinY,
+    maxX: viewMinX + scene.width / scene.zoom,
+    maxY: viewMinY + scene.height / scene.zoom,
+  };
 
   ctx.save();
   ctx.translate(scene.pan.x, scene.pan.y);
+  ctx.scale(scene.zoom, scene.zoom);
 
   Render.drawOpticalAxis(ctx, viewMinX, viewport.maxX, scene.axisY, dragging && dragging.type !== 'pan' && snapActive);
 
@@ -179,25 +189,28 @@ function distToSegment(p, a, b) {
   return Optics.length(Optics.sub(p, closest));
 }
 
+// Hit-test thresholds are defined in screen pixels, not world units, so
+// clicking/snapping feels equally precise regardless of zoom level.
 function elementHitTest(el, point) {
+  const threshold = 10 / scene.zoom;
   if (el.kind === 'prism') {
     const { face1, face2 } = Optics.buildPrismFaces(el);
     return (
-      distToSegment(point, face1.a, face1.b) < 10 ||
-      distToSegment(point, face2.a, face2.b) < 10 ||
-      distToSegment(point, face1.b, face2.b) < 10
+      distToSegment(point, face1.a, face1.b) < threshold ||
+      distToSegment(point, face2.a, face2.b) < threshold ||
+      distToSegment(point, face1.b, face2.b) < threshold
     );
   }
   const { a, b } = Optics.elementEndpoints(el);
-  return distToSegment(point, a, b) < 10;
+  return distToSegment(point, a, b) < threshold;
 }
 
 function hitTest(point) {
-  if (Optics.length(Optics.sub(point, scene.source.position)) < 12) return { type: 'source' };
+  if (Optics.length(Optics.sub(point, scene.source.position)) < 12 / scene.zoom) return { type: 'source' };
   for (let i = scene.elements.length - 1; i >= 0; i--) {
     if (elementHitTest(scene.elements[i], point)) return { type: 'element', ref: scene.elements[i] };
   }
-  if (Math.abs(point.y - scene.axisY) < 8) return { type: 'axis' };
+  if (Math.abs(point.y - scene.axisY) < 8 / scene.zoom) return { type: 'axis' };
   return null;
 }
 
@@ -207,8 +220,43 @@ function canvasPoint(evt) {
 }
 
 function toWorld(screenPoint) {
-  return { x: screenPoint.x - scene.pan.x, y: screenPoint.y - scene.pan.y };
+  return { x: (screenPoint.x - scene.pan.x) / scene.zoom, y: (screenPoint.y - scene.pan.y) / scene.zoom };
 }
+
+// ---------- zoom ----------
+
+function updateZoomReadout() {
+  const el = document.getElementById('zoom-readout');
+  if (el) el.textContent = Math.round(scene.zoom * 100) + '%';
+}
+
+// Zooms toward/away from a fixed screen point (the mouse cursor for wheel
+// zoom, the canvas center for button/keyboard zoom) so that world point
+// stays visually fixed under it rather than the view jumping around.
+function zoomAt(screenPoint, factor) {
+  const newZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, scene.zoom * factor));
+  if (newZoom === scene.zoom) return;
+  const worldPoint = toWorld(screenPoint);
+  scene.zoom = newZoom;
+  scene.pan.x = screenPoint.x - newZoom * worldPoint.x;
+  scene.pan.y = screenPoint.y - newZoom * worldPoint.y;
+  updateZoomReadout();
+  draw();
+}
+
+function canvasCenter() {
+  return { x: scene.width / 2, y: scene.height / 2 };
+}
+
+canvas.addEventListener(
+  'wheel',
+  (evt) => {
+    evt.preventDefault();
+    const factor = evt.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP;
+    zoomAt(canvasPoint(evt), factor);
+  },
+  { passive: false }
+);
 
 // ---------- mouse events ----------
 
@@ -248,7 +296,7 @@ window.addEventListener('mousemove', (evt) => {
     scene.axisY = p.y;
     snapActive = false;
   } else {
-    snapActive = Math.abs(p.y - scene.axisY) < SNAP_PX;
+    snapActive = Math.abs(p.y - scene.axisY) < SNAP_PX / scene.zoom;
     if (snapActive) p.y = scene.axisY;
     if (dragging.type === 'source') scene.source.position = p;
     else dragging.ref.center = p;
@@ -280,6 +328,17 @@ canvas.addEventListener('keydown', (evt) => {
     selected = null;
     syncPanelToSelection();
     draw();
+    return;
+  }
+
+  if (evt.key === '+' || evt.key === '=') {
+    evt.preventDefault();
+    zoomAt(canvasCenter(), ZOOM_STEP);
+    return;
+  }
+  if (evt.key === '-' || evt.key === '_') {
+    evt.preventDefault();
+    zoomAt(canvasCenter(), 1 / ZOOM_STEP);
     return;
   }
 
@@ -703,8 +762,13 @@ document.getElementById('delete-selected').addEventListener('click', () => {
 
 document.getElementById('reset-view').addEventListener('click', () => {
   scene.pan = { x: 0, y: 0 };
+  scene.zoom = 1;
+  updateZoomReadout();
   draw();
 });
+
+document.getElementById('zoom-in').addEventListener('click', () => zoomAt(canvasCenter(), ZOOM_STEP));
+document.getElementById('zoom-out').addEventListener('click', () => zoomAt(canvasCenter(), 1 / ZOOM_STEP));
 
 // ---------- scene save/load (JSON) ----------
 // Lets a configuration be shared or reproduced exactly -- save the source
@@ -790,4 +854,5 @@ loadSceneFileInput.addEventListener('change', () => {
 resizeCanvas();
 document.getElementById('add-lens').click();
 scene.elements[0].center = { x: 380, y: scene.axisY };
+updateZoomReadout();
 draw();

@@ -506,17 +506,31 @@ test('traceAberrationFan: marginal rays focus short of the paraxial focus (negat
 // aberration theory against real ray tracing.
 // ---------------------------------------------------------------------
 
-test('computeSeidelSpherical: converges to the exact ray-traced transverse aberration as the aperture shrinks', () => {
-  const y0 = 2; // small -- deep in the paraxial regime
-  const margin = 0.92;
-  const lens = {
-    model: 'realistic', center: { x: 0, y: 0 }, angle: 0, height: (y0 / margin) * 2, thickness: 30,
+// `computeSeidelSpherical` defines its marginal-ray height as lens.height/2
+// directly, while `traceAberrationFan`'s edge sample sits at
+// halfHeight * 0.92 (a small margin kept inside the physical aperture).
+// To compare the two at the *same* ray height y0, each needs its own
+// `height` value: 2*y0 for the Seidel lens, (2*y0)/0.92 for the fan lens
+// -- otherwise the two are silently evaluated at different heights, which
+// (since aberration isn't linear) shows up as a spurious-looking mismatch.
+const FAN_EDGE_MARGIN = 0.92;
+function seidelComparisonLenses(y0) {
+  const base = {
+    model: 'realistic', center: { x: 0, y: 0 }, angle: 0, thickness: 30,
     glass: 'n-bk7', customA: null, customB: null, r1: 150, r2: -150,
   };
+  return {
+    seidelLens: { ...base, height: y0 * 2 },
+    fanLens: { ...base, height: (y0 / FAN_EDGE_MARGIN) * 2 },
+  };
+}
+
+test('computeSeidelSpherical: converges to the exact ray-traced transverse aberration as the aperture shrinks', () => {
+  const { seidelLens, fanLens } = seidelComparisonLenses(2); // small -- deep in the paraxial regime
   const source = { mode: 'parallel', angle: 0, wavelength: 550 };
 
-  const seidel = Optics.computeSeidelSpherical(lens, source);
-  const fan = Optics.traceAberrationFan(lens, source, 3);
+  const seidel = Optics.computeSeidelSpherical(seidelLens, source);
+  const fan = Optics.traceAberrationFan(fanLens, source, 3);
   const exact = fan.samples[fan.samples.length - 1].transverseAberration;
 
   assert.ok(seidel);
@@ -524,17 +538,12 @@ test('computeSeidelSpherical: converges to the exact ray-traced transverse aberr
 });
 
 test('computeSeidelSpherical: the 3rd-order prediction increasingly diverges from the exact trace as the aperture grows (higher-order aberration)', () => {
-  const margin = 0.92;
-  const makeLens = (y0) => ({
-    model: 'realistic', center: { x: 0, y: 0 }, angle: 0, height: (y0 / margin) * 2, thickness: 30,
-    glass: 'n-bk7', customA: null, customB: null, r1: 150, r2: -150,
-  });
   const source = { mode: 'parallel', angle: 0, wavelength: 550 };
 
   function ratioAt(y0) {
-    const lens = makeLens(y0);
-    const seidel = Optics.computeSeidelSpherical(lens, source);
-    const fan = Optics.traceAberrationFan(lens, source, 3);
+    const { seidelLens, fanLens } = seidelComparisonLenses(y0);
+    const seidel = Optics.computeSeidelSpherical(seidelLens, source);
+    const fan = Optics.traceAberrationFan(fanLens, source, 3);
     const exact = fan.samples[fan.samples.length - 1].transverseAberration;
     return seidel.predictedTransverseAberration / exact;
   }
