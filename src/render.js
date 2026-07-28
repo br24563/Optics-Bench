@@ -158,13 +158,12 @@ function drawLens(ctx, lens, isSelected) {
 // (f < 0) lenses point them inward — the same convention used in optics
 // textbooks, so the symbol itself tells you the lens type at a glance.
 //
-// Both cases draw the little stem+arrowhead entirely *outside* the
-// aperture line, in the space beyond `top`/`bottom` — only the direction
-// the arrowhead points (outward for converging, inward for diverging)
-// differs. That keeps the arrow's tip anchored right at the true aperture
-// edge in both cases, rather than a diverging lens's inward-pointing
-// arrow retracing into the middle of the lens body (visibly so for a
-// short aperture, since the stem+head span is a fixed pixel length).
+// Converging draws a short stem beyond the aperture edge, capped with an
+// arrowhead pointing further outward. Diverging draws *only* the
+// arrowhead (no stem) with its tip biting a hair past the aperture edge,
+// so it reads as one continuous shape fused to the lens's vertical
+// stroke rather than a triangle with a disconnected tail trailing off
+// past it, or a visible seam where the two shapes meet.
 function drawIdealLens(ctx, lens, isSelected) {
   const axis = Optics.fromAngle(lens.angle);
   const tangent = { x: -axis.y, y: axis.x };
@@ -184,17 +183,13 @@ function drawIdealLens(ctx, lens, isSelected) {
 
   const topOutward = tangent;
   const bottomOutward = Optics.scale(tangent, -1);
-  const arrowSpan = LENS_ARROW_STEM + LENS_ARROW_HEAD;
 
   if (converging) {
-    // Base sits at the edge; the arrow flares outward from there.
-    drawLensArrow(ctx, top, topOutward, color);
-    drawLensArrow(ctx, bottom, bottomOutward, color);
+    drawOutwardArrow(ctx, top, topOutward, color);
+    drawOutwardArrow(ctx, bottom, bottomOutward, color);
   } else {
-    // Base sits one arrow-span *beyond* the edge; the arrow points inward
-    // so its tip lands back exactly on the edge.
-    drawLensArrow(ctx, Optics.add(top, Optics.scale(topOutward, arrowSpan)), Optics.scale(topOutward, -1), color);
-    drawLensArrow(ctx, Optics.add(bottom, Optics.scale(bottomOutward, arrowSpan)), Optics.scale(bottomOutward, -1), color);
+    drawInwardArrowhead(ctx, top, Optics.scale(topOutward, -1), color);
+    drawInwardArrowhead(ctx, bottom, Optics.scale(bottomOutward, -1), color);
   }
 
   drawFocalTicks(ctx, lens.center, axis, Math.abs(lens.focalLength));
@@ -203,23 +198,15 @@ function drawIdealLens(ctx, lens, isSelected) {
 
 const LENS_ARROW_STEM = 10;
 const LENS_ARROW_HEAD = 9;
+const LENS_ARROW_WIDTH = 8;
+const LENS_ARROW_OVERLAP = 1.5; // tip bites this far past the edge for a seamless join
 
-function drawLensArrow(ctx, from, dir, color) {
-  const stemLen = LENS_ARROW_STEM;
-  const headLen = LENS_ARROW_HEAD;
-  const headWidth = 8;
-  const stemEnd = Optics.add(from, Optics.scale(dir, stemLen));
-  const tip = Optics.add(stemEnd, Optics.scale(dir, headLen));
+// A solid, filled arrowhead with its apex at `tip`, pointing in `dir`.
+function fillArrowhead(ctx, tip, dir, color) {
+  const base = Optics.sub(tip, Optics.scale(dir, LENS_ARROW_HEAD));
   const perp = { x: -dir.y, y: dir.x };
-  const left = Optics.add(stemEnd, Optics.scale(perp, headWidth / 2));
-  const right = Optics.add(stemEnd, Optics.scale(perp, -headWidth / 2));
-
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 3;
-  ctx.beginPath();
-  ctx.moveTo(from.x, from.y);
-  ctx.lineTo(stemEnd.x, stemEnd.y);
-  ctx.stroke();
+  const left = Optics.add(base, Optics.scale(perp, LENS_ARROW_WIDTH / 2));
+  const right = Optics.add(base, Optics.scale(perp, -LENS_ARROW_WIDTH / 2));
 
   ctx.beginPath();
   ctx.moveTo(tip.x, tip.y);
@@ -228,6 +215,26 @@ function drawLensArrow(ctx, from, dir, color) {
   ctx.closePath();
   ctx.fillStyle = color;
   ctx.fill();
+}
+
+// Converging: a stem from the aperture edge, flaring further outward
+// into an arrowhead.
+function drawOutwardArrow(ctx, from, dir, color) {
+  const stemEnd = Optics.add(from, Optics.scale(dir, LENS_ARROW_STEM));
+
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(from.x, from.y);
+  ctx.lineTo(stemEnd.x, stemEnd.y);
+  ctx.stroke();
+
+  fillArrowhead(ctx, Optics.add(stemEnd, Optics.scale(dir, LENS_ARROW_HEAD)), dir, color);
+}
+
+// Diverging: just the arrowhead, no stem, tip fused to the aperture edge.
+function drawInwardArrowhead(ctx, edgePoint, dir, color) {
+  fillArrowhead(ctx, Optics.add(edgePoint, Optics.scale(dir, LENS_ARROW_OVERLAP)), dir, color);
 }
 
 // Realistic lens: each surface is drawn as a true circular arc, parametrized
