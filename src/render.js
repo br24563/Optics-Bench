@@ -248,8 +248,7 @@ function drawRealisticLens(ctx, lens, isSelected) {
 
   const f = Optics.effectiveFocalLength(lens, 550);
   if (isFinite(f)) drawFocalTicks(ctx, lens.center, s.axis, Math.abs(f));
-  const glassLabel = (Optics.GLASS_PRESETS[lens.glass] || Optics.GLASS_PRESETS.crown).label;
-  drawLabel(ctx, lens.center, s.axis, glassLabel, -18);
+  drawLabel(ctx, lens.center, s.axis, Optics.glassLabel(lens.glass), -18);
 }
 
 // Samples the gap between the front and back surfaces from the axis
@@ -366,8 +365,7 @@ function drawPrism(ctx, prism, isSelected) {
   ctx.stroke();
 
   drawAxisLine(ctx, prism);
-  const glassLabel = (Optics.GLASS_PRESETS[prism.glass] || Optics.GLASS_PRESETS.crown).label;
-  drawLabel(ctx, prism.center, Optics.fromAngle(prism.angle), `${prism.apexAngle}\u00B0 prism \u2014 ${glassLabel}`, -18);
+  drawLabel(ctx, prism.center, Optics.fromAngle(prism.angle), `${prism.apexAngle}\u00B0 prism \u2014 ${Optics.glassLabel(prism.glass)}`, -18);
 }
 
 // ---------- source ----------
@@ -416,6 +414,131 @@ function drawImageMarker(ctx, source, lens, info) {
   ctx.fillText(info.real ? 'real image' : 'virtual image', imagePoint.x, imagePoint.y - 22);
 }
 
+// ---------- aberration analysis plots (ray fan / LSA) ----------
+// Small dedicated-canvas plots in the style of a lens-design tool's ray
+// aberration fan and longitudinal spherical aberration charts.
+
+function clearPlot(ctx, w, h) {
+  ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = '#0d1319';
+  ctx.fillRect(0, 0, w, h);
+}
+
+function drawPlotFrame(ctx, w, h, pad, xLabel, yLabel) {
+  ctx.strokeStyle = 'rgba(147, 163, 179, 0.35)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(pad, pad, w - 2 * pad, h - 2 * pad);
+  ctx.font = '9px "IBM Plex Mono", monospace';
+  ctx.fillStyle = 'rgba(147, 163, 179, 0.7)';
+  ctx.textAlign = 'center';
+  ctx.fillText(xLabel, w / 2, h - 3);
+  ctx.save();
+  ctx.translate(9, h / 2);
+  ctx.rotate(-Math.PI / 2);
+  ctx.fillText(yLabel, 0, 0);
+  ctx.restore();
+}
+
+function drawPlotPlaceholder(ctx, w, h, text) {
+  ctx.fillStyle = 'rgba(147, 163, 179, 0.55)';
+  ctx.font = '10.5px "IBM Plex Mono", monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText(text, w / 2, h / 2 + 3);
+}
+
+// Ray aberration fan: transverse ray aberration (ΔY, µm) at the paraxial
+// image plane vs. normalized pupil coordinate (Pᵧ, -1..1) -- the classic
+// lens-design "ray fan" plot. A perfect (unaberrated) lens plots as a flat
+// line at ΔY=0; the bow shape here is real spherical aberration.
+function drawRayFanPlot(canvas, fan) {
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width, h = canvas.height;
+  clearPlot(ctx, w, h);
+  const pad = 20;
+  drawPlotFrame(ctx, w, h, pad, 'pupil coordinate (Pᵧ)', 'ΔY (µm)');
+
+  if (!fan) {
+    drawPlotPlaceholder(ctx, w, h, 'no real image to analyze');
+    return;
+  }
+
+  const values = fan.samples.map((s) => s.transverseAberration * 1000); // mm -> µm
+  const maxAbs = Math.max(1e-6, ...values.map(Math.abs));
+  const plotW = w - 2 * pad, plotH = h - 2 * pad;
+  const xOf = (p) => pad + ((p + 1) / 2) * plotW;
+  const yOf = (v) => pad + plotH / 2 - (v / maxAbs) * (plotH / 2 - 4);
+
+  ctx.strokeStyle = 'rgba(255, 210, 63, 0.4)';
+  ctx.setLineDash([3, 3]);
+  ctx.beginPath();
+  ctx.moveTo(pad, yOf(0));
+  ctx.lineTo(w - pad, yOf(0));
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  ctx.strokeStyle = COLORS.lens;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  fan.samples.forEach((s, i) => {
+    const x = xOf(s.pupilFraction), y = yOf(s.transverseAberration * 1000);
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+
+  ctx.fillStyle = 'rgba(230, 238, 246, 0.55)';
+  ctx.font = '9px "IBM Plex Mono", monospace';
+  ctx.textAlign = 'right';
+  ctx.fillText(`±${maxAbs.toFixed(1)}µm full scale`, w - pad - 2, pad + 10);
+}
+
+// Longitudinal spherical aberration (LSA): each ray's own focus shift from
+// the paraxial focus (mm) vs. the pupil coordinate it passed through
+// (Pᵧ, -1..1, plotted vertically per lens-design convention). Marginal
+// rays bowing toward negative LSA is the classic signature of undercorrected
+// spherical aberration in a simple converging lens.
+function drawLSAPlot(canvas, fan) {
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width, h = canvas.height;
+  clearPlot(ctx, w, h);
+  const pad = 20;
+  drawPlotFrame(ctx, w, h, pad, 'LSA (mm)', 'pupil (Pᵧ)');
+
+  if (!fan) {
+    drawPlotPlaceholder(ctx, w, h, 'no real image to analyze');
+    return;
+  }
+
+  const lsas = fan.samples.map((s) => s.longitudinalAberration);
+  const maxAbs = Math.max(1e-6, ...lsas.map(Math.abs));
+  const plotW = w - 2 * pad, plotH = h - 2 * pad;
+  const xOf = (v) => pad + plotW / 2 + (v / maxAbs) * (plotW / 2 - 4);
+  const yOf = (p) => pad + ((1 - p) / 2) * plotH; // +pupil plots toward the top
+
+  ctx.strokeStyle = 'rgba(255, 210, 63, 0.4)';
+  ctx.setLineDash([3, 3]);
+  ctx.beginPath();
+  ctx.moveTo(xOf(0), pad);
+  ctx.lineTo(xOf(0), h - pad);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  ctx.strokeStyle = COLORS.prism;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  fan.samples.forEach((s, i) => {
+    const x = xOf(s.longitudinalAberration), y = yOf(s.pupilFraction);
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+
+  ctx.fillStyle = 'rgba(230, 238, 246, 0.55)';
+  ctx.font = '9px "IBM Plex Mono", monospace';
+  ctx.textAlign = 'right';
+  ctx.fillText(`±${maxAbs.toFixed(2)}mm full scale`, w - pad - 2, pad + 10);
+}
+
 window.Render = {
   COLORS,
   drawBreadboard,
@@ -426,4 +549,6 @@ window.Render = {
   drawPrism,
   drawSource,
   drawImageMarker,
+  drawRayFanPlot,
+  drawLSAPlot,
 };

@@ -378,6 +378,11 @@ const elY = document.getElementById('el-y');
 const elReadout = document.getElementById('el-readout');
 const imageAnalysis = document.getElementById('image-analysis');
 const imageReadout = document.getElementById('image-readout');
+const aberrationAnalysis = document.getElementById('aberration-analysis');
+const rayFanCanvas = document.getElementById('ray-fan-canvas');
+const lsaCanvas = document.getElementById('lsa-canvas');
+const prescriptionData = document.getElementById('prescription-data');
+const rxTable = document.getElementById('rx-table');
 
 const lensControlsDiv = document.getElementById('lens-controls');
 const mirrorControlsDiv = document.getElementById('mirror-controls');
@@ -508,7 +513,12 @@ prismCustomBEl.addEventListener('input', () => { const el = selectedOfKind('pris
 function syncPanelToSelection() {
   const isElement = selected && selected.type === 'element';
   elementControls.hidden = !isElement;
-  if (!isElement) { imageAnalysis.hidden = true; return; }
+  if (!isElement) {
+    imageAnalysis.hidden = true;
+    aberrationAnalysis.hidden = true;
+    prescriptionData.hidden = true;
+    return;
+  }
 
   const el = selected.ref;
   elementTitle.textContent = el.kind[0].toUpperCase() + el.kind.slice(1) + ' \u2014 selected';
@@ -548,9 +558,31 @@ function syncPanelToSelection() {
   }
 
   imageAnalysis.hidden = el.kind !== 'lens';
+  const isRealisticLens = el.kind === 'lens' && el.model === 'realistic';
+  aberrationAnalysis.hidden = !isRealisticLens;
+  prescriptionData.hidden = !isRealisticLens;
 }
 
-function formatImageInfo(info, spot) {
+// Zemax-style Lens Data Editor table for a realistic lens's two surfaces.
+function buildPrescriptionTable(el) {
+  const n = Optics.lensIndexAt(el, scene.source.wavelength);
+  const vd = Optics.abbeNumber(el.glass, el.customA, el.customB);
+  const semiDia = (el.height / 2).toFixed(1);
+  const glassName = Optics.glassLabel(el.glass).split(',')[0];
+
+  const rows = [
+    { surf: '1 (front)', radius: el.r1.toFixed(0), thickness: el.thickness.toFixed(0), glass: glassName, index: n.toFixed(4) },
+    { surf: '2 (back)', radius: el.r2.toFixed(0), thickness: '—', glass: 'air', index: '1.0000' },
+  ];
+
+  const header = '<tr><th>Surf</th><th>Radius</th><th>Thick.</th><th>Glass</th><th>n</th></tr>';
+  const body = rows
+    .map((r) => `<tr><td>${r.surf}</td><td>${r.radius}</td><td>${r.thickness}</td><td>${r.glass}</td><td>${r.index}</td></tr>`)
+    .join('');
+  return `<caption>semi-aperture ${semiDia}mm · V_d = ${vd.toFixed(1)}</caption>${header}${body}`;
+}
+
+function formatImageInfo(info, spot, seidel) {
   if (!info.valid) return info.reason;
   const lines = [];
   if (info.parallel) {
@@ -570,6 +602,12 @@ function formatImageInfo(info, spot) {
       `peak \u2248 ${(spot.peakRadius * 1000).toFixed(2)}\u00B5m (${spot.sampleCount} rays across the aperture)`
     );
   }
+  if (seidel) {
+    lines.push(
+      `3rd-order (Seidel) prediction for the marginal ray: ${Math.abs(seidel.predictedTransverseAberration * 1000).toFixed(2)}\u00B5m ` +
+      `\u2014 compare to the exact ray-traced peak above; the gap is higher-order aberration beyond 3rd order`
+    );
+  }
   return lines.join('\n');
 }
 
@@ -584,20 +622,30 @@ function updateReadouts() {
     } else {
       const n = Optics.lensIndexAt(el, scene.source.wavelength);
       const f = Optics.effectiveFocalLength(el, scene.source.wavelength);
-      elReadout.textContent = `n(${scene.source.wavelength}nm) = ${n.toFixed(4)}`;
+      const vd = Optics.abbeNumber(el.glass, el.customA, el.customB);
+      elReadout.textContent = `n(${scene.source.wavelength}nm) = ${n.toFixed(4)}, V_d = ${vd.toFixed(1)}`;
       document.getElementById('lens-effective-f').textContent =
         `effective focal length \u2248 ${Math.round(f)}mm (thin-lens estimate; the traced rays include real spherical aberration beyond this paraxial value)`;
     }
     const info = Optics.computeImageInfo(scene.source, el);
     const spot = el.model === 'realistic' ? Optics.computeSpotDiagram(el, scene.source) : null;
-    imageReadout.textContent = formatImageInfo(info, spot);
+    const seidel = el.model === 'realistic' ? Optics.computeSeidelSpherical(el, scene.source) : null;
+    imageReadout.textContent = formatImageInfo(info, spot, seidel);
+
+    if (el.model === 'realistic') {
+      const fan = Optics.traceAberrationFan(el, scene.source);
+      Render.drawRayFanPlot(rayFanCanvas, fan);
+      Render.drawLSAPlot(lsaCanvas, fan);
+      rxTable.innerHTML = buildPrescriptionTable(el);
+    }
   } else if (el.kind === 'mirror') {
     elReadout.textContent = el.surface === 'flat'
       ? 'flat mirror'
       : `${el.surface} mirror, R = ${Math.round(el.radius)}mm, f = ${Math.round(el.radius / 2)}mm`;
   } else if (el.kind === 'prism') {
     const n = Optics.prismIndexAt(el, scene.source.wavelength);
-    elReadout.textContent = `n(${scene.source.wavelength}nm) = ${n.toFixed(4)}, apex angle ${el.apexAngle}\u00B0`;
+    const vd = Optics.abbeNumber(el.glass, el.customA, el.customB);
+    elReadout.textContent = `n(${scene.source.wavelength}nm) = ${n.toFixed(4)}, V_d = ${vd.toFixed(1)}, apex angle ${el.apexAngle}\u00B0`;
   }
 }
 
@@ -609,7 +657,7 @@ document.getElementById('add-lens').addEventListener('click', () => {
     center: { x: scene.width / 2, y: scene.axisY },
     angle: 0, height: 90,
     focalLength: 140,
-    glass: 'crown', customA: 1.50, customB: 0.0042,
+    glass: 'n-bk7', customA: 1.50, customB: 0.0042,
     r1: 150, r2: -150, thickness: 30,
   };
   scene.elements.push(el);

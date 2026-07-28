@@ -135,8 +135,17 @@
               <label class="field">
                 Glass
                 <select id="el-glass">
-                  <option value="crown">Crown glass (BK7-like)</option>
-                  <option value="flint">Flint glass (more dispersive)</option>
+                  <optgroup label="Real glass (Schott Sellmeier catalog)">
+                    <option value="n-bk7">N-BK7 (n≈1.517, V≈64.2)</option>
+                    <option value="n-bak4">N-BAK4 (n≈1.569, V≈55.9)</option>
+                    <option value="n-sf11">N-SF11 (n≈1.785, V≈25.7)</option>
+                    <option value="n-sf6">N-SF6 (n≈1.805, V≈25.4)</option>
+                    <option value="fused-silica">Fused silica (n≈1.458, V≈67.8)</option>
+                  </optgroup>
+                  <optgroup label="Demo glass (exaggerated dispersion, for visibility)">
+                    <option value="crown">Crown glass (BK7-like)</option>
+                    <option value="flint">Flint glass (more dispersive)</option>
+                  </optgroup>
                   <option value="custom">Custom Cauchy coefficients</option>
                 </select>
               </label>
@@ -196,8 +205,17 @@
             <label class="field">
               Glass
               <select id="el-prism-glass">
-                <option value="crown">Crown glass (BK7-like)</option>
-                <option value="flint">Flint glass (more dispersive)</option>
+                <optgroup label="Real glass (Schott Sellmeier catalog)">
+                  <option value="n-bk7">N-BK7 (n≈1.517, V≈64.2)</option>
+                  <option value="n-bak4">N-BAK4 (n≈1.569, V≈55.9)</option>
+                  <option value="n-sf11">N-SF11 (n≈1.785, V≈25.7)</option>
+                  <option value="n-sf6">N-SF6 (n≈1.805, V≈25.4)</option>
+                  <option value="fused-silica">Fused silica (n≈1.458, V≈67.8)</option>
+                </optgroup>
+                <optgroup label="Demo glass (exaggerated dispersion, for visibility)">
+                  <option value="crown">Crown glass (BK7-like)</option>
+                  <option value="flint">Flint glass (more dispersive)</option>
+                </optgroup>
                 <option value="custom">Custom Cauchy coefficients</option>
               </select>
             </label>
@@ -214,6 +232,19 @@
         <section class="panel-section" id="image-analysis" hidden>
           <h2>Image formation</h2>
           <p class="readout" id="image-readout"></p>
+        </section>
+
+        <section class="panel-section" id="aberration-analysis" hidden>
+          <h2>Aberration analysis</h2>
+          <p class="plot-label">Ray fan — transverse aberration vs. pupil</p>
+          <canvas id="ray-fan-canvas" width="260" height="120"></canvas>
+          <p class="plot-label">Longitudinal spherical aberration</p>
+          <canvas id="lsa-canvas" width="260" height="120"></canvas>
+        </section>
+
+        <section class="panel-section" id="prescription-data" hidden>
+          <h2>Prescription data</h2>
+          <table class="rx-table" id="rx-table"></table>
         </section>
 
         <details class="panel-section legend">

@@ -6,7 +6,12 @@ A draggable, interactive optics playground that runs entirely in the
 browser — no build step, no dependencies. Drag a light source, lenses,
 mirrors, and a dispersive prism around an optical-table canvas and watch
 real physics compute every ray bend live, validated against the same
-textbook formulas you'd find in Hecht or Born & Wolf.
+textbook formulas you'd find in Hecht or Born & Wolf. Alongside the
+interactive bench sits a small set of real lens-design analysis tools —
+a ray-fan plot, longitudinal spherical aberration curve, Seidel
+coefficient, Lens Data Editor-style prescription table, and a real
+Sellmeier glass catalog — a lightweight, browser-native taste of what a
+tool like Zemax OpticStudio shows for a single-element system.
 
 **[Live demo →](#)** *(add your GitHub Pages link here once deployed)*
 
@@ -31,9 +36,10 @@ textbook formulas you'd find in Hecht or Born & Wolf.
 - **Flat, concave, and convex mirrors**, each reflecting correctly with the
   focusing behavior of a real spherical mirror.
 - **A dispersive prism.** Its refractive index depends on wavelength (via
-  Cauchy's equation), so switch on "white light" and watch a single beam
-  split by wavelength — or dial the source wavelength by hand and watch the
-  bend angle shift in real time.
+  the Sellmeier or Cauchy dispersion equation, depending on the glass), so
+  switch on "white light" and watch a single beam split by wavelength — or
+  dial the source wavelength by hand and watch the bend angle shift in
+  real time.
 - **A live image-formation readout.** Select a lens and see the actual
   object distance, image distance, magnification, and whether the image is
   real/virtual and upright/inverted — computed from the thin-lens equation
@@ -55,6 +61,19 @@ textbook formulas you'd find in Hecht or Born & Wolf.
 - **Save and load scenes.** "Save scene…" downloads the current source and
   every element as plain JSON; "Load scene…" restores it exactly, so a
   configuration can be shared or reproduced precisely.
+- **A real glass catalog.** Choose from real Schott glasses (N-BK7,
+  N-BAK4, N-SF11, N-SF6, fused silica) via the actual 3-term Sellmeier
+  dispersion equation the catalogs publish, alongside the original
+  exaggerated "demo" glasses (kept for a clearly-visible dispersion demo)
+  and fully custom Cauchy coefficients. Every glass reports its Abbe
+  number (V_d) next to its index.
+- **Lens-design analysis tools**, for a realistic lens: a **ray-fan plot**
+  (transverse aberration vs. pupil coordinate), a **longitudinal spherical
+  aberration (LSA) plot**, a **3rd-order Seidel spherical aberration
+  coefficient** (an independent paraxial calculation, shown alongside the
+  exact ray-traced result), and a **prescription (Lens Data Editor-style)
+  table** of the surface-by-surface radius/thickness/glass/index data —
+  see [Lens-design analysis tools](#lens-design-analysis-tools) below.
 
 ## The physics
 
@@ -83,14 +102,20 @@ the flat reflection, so the same `refractThinLens` helper does double duty
 here.
 
 **The prism** refracts through two real flat glass faces using the same
-vector Snell's law as the realistic lens. Its index of refraction follows
-Cauchy's equation, `n(λ) = A + B/λ²`, so shorter (bluer) wavelengths bend
-more than longer (redder) ones — the actual reason a prism splits white
-light into a spectrum, not a hand-wavy color gradient. (Real BK7/flint
-dispersion across the visible spectrum is under a degree — genuinely subtle
-at canvas scale — so the `B` coefficients here are moderately exaggerated
-from real glass data to make it easier to see; the wavelength-dependence
-itself is the real Cauchy relation.)
+vector Snell's law as the realistic lens. A glass's index of refraction
+depends on wavelength — shorter (bluer) wavelengths bend more than longer
+(redder) ones, the actual reason a prism splits white light into a
+spectrum, not a hand-wavy color gradient. Two dispersion models are
+available: the real **3-term Sellmeier equation** (Sellmeier, 1871),
+`n(λ)² = 1 + Σ Bᵢλ²/(λ²-Cᵢ)`, using the actual published Schott catalog
+coefficients for N-BK7, N-BAK4, N-SF11, N-SF6, and fused silica (each
+matched against its known d-line index to 5 significant figures); and a
+simpler 2-term **Cauchy equation**, `n(λ) = A + B/λ²` (Hecht §3.7.1), used
+for the "demo" glasses and custom coefficients. Real BK7/flint dispersion
+across the visible spectrum is under a degree — genuinely subtle at
+canvas scale — so the demo glasses' `B` coefficients are moderately
+exaggerated to make the effect easier to see; the real-glass presets use
+unmodified catalog data.
 
 **Total internal reflection** is handled as a real physical case, not an
 edge-case crash: if light hits a glass-to-air boundary steeper than the
@@ -105,6 +130,37 @@ an actual near-axis ray through the real surfaces rather than assuming the
 thin-lens focal length applies at the lens's geometric center (which is
 only exactly true for a lens of negligible thickness; a real, thick lens's
 paraxial focus sits at a principal-plane-shifted position).
+
+## Lens-design analysis tools
+
+Select a realistic lens and two more panels appear alongside the
+image-formation readout — the same kind of analysis a real lens-design
+tool (Zemax OpticStudio, Code V, ...) shows for a single element:
+
+- **Ray-fan plot** — transverse ray aberration (ΔY, µm) at the paraxial
+  image plane vs. normalized pupil coordinate (Pᵧ, −1 to 1). A perfect,
+  unaberrated lens plots as a flat line at zero; the S-shaped bow you'll
+  actually see is real, ray-traced spherical aberration.
+- **Longitudinal spherical aberration (LSA) plot** — each ray's own focus
+  shift from the paraxial focus (mm) vs. the pupil height it passed
+  through. Marginal rays bowing toward negative LSA is the classic
+  signature of undercorrected spherical aberration in a simple converging
+  lens.
+- **3rd-order (Seidel) spherical aberration** — a genuinely independent
+  calculation from the exact ray trace: a true paraxial marginal-ray trace
+  through both surfaces, combined into the classic Seidel sum
+  (Welford, *Aberrations of Optical Systems*, 2nd ed., Ch. 9; Kingslake &
+  Johnson, *Lens Design Fundamentals*, 2nd ed., Ch. 5),
+  `S_I = Σ_surfaces A²yΔ(u/n)`, predicting the marginal ray's transverse
+  aberration as `−S_I / (2n'u')`. This number is shown next to the exact
+  ray-traced peak so you can see 3rd-order theory agree to a fraction of a
+  percent at a small aperture, and increasingly diverge as the aperture
+  grows and higher-order aberrations start to dominate — a direct,
+  visible demonstration of *why* lens designers need more than 3rd-order
+  theory for fast optics.
+- **Prescription data** — a compact, Lens Data Editor-style table of the
+  lens's two surfaces (radius, thickness, glass, index at the current
+  wavelength) plus its semi-aperture and Abbe number.
 
 ## Units
 
@@ -135,12 +191,26 @@ hand-derived textbook values — in `test/optics.test.js`:
 - The Airy-disk diffraction formula and that RMS spot radius scales
   correctly (roughly with the cube of aperture height, as expected for
   spherical aberration near the paraxial regime)
+- The Sellmeier equation against each real glass's published index and
+  Abbe number
+- The 3rd-order Seidel spherical aberration prediction against the exact
+  ray trace, confirming agreement to within 1% at a small (near-paraxial)
+  aperture and increasing disagreement at a larger one — the two
+  calculations share no code, so their convergence is a genuine check on
+  both
 - A geometric regression: a lens surface is only the *near* hemisphere of
   its curvature sphere — a naive nearest-intersection test can strike the
   sphere's far side (which, for a point source, sits in empty space well
   before the real glass) and incorrectly "win" because it's closer. This
   was an actual bug caught by writing this test suite, now covered by a
   permanent regression test.
+- A methodology regression: the paraxial reference plane for the spot
+  diagram/ray-fan must come from tracing an actual near-axis ray through
+  the *real* (thick) surfaces, not from the thin-lens focal length
+  measured at the lens's geometric center — the latter injects a spurious
+  defocus that swamps the real (much smaller, cubic-in-aperture)
+  aberration signal. Also caught by this test suite; also now a permanent
+  regression test.
 
 Run the suite (Node's built-in test runner, no dependencies) with:
 
@@ -223,6 +293,16 @@ then it has no dependencies to install — `npm test` works standalone.)
 - Select an element and nudge it with the arrow keys instead of the mouse
   (Shift for a bigger step) — then hit **Save scene…** to download the
   configuration as JSON, and **Load scene…** to bring it back exactly.
+- With a realistic lens selected and collimated (**Parallel**) input,
+  watch the **ray-fan** and **LSA** plots update live as you drag the
+  R1/R2 sliders toward smaller radii (a faster, more strongly-curved
+  lens) — and watch the 3rd-order Seidel prediction increasingly diverge
+  from the exact ray-traced peak as the aberration grows.
+- Switch a lens's glass from a **demo** preset to a **real** one (e.g.
+  N-BK7) and back, and watch the effective focal length and the spot size
+  shift slightly — real glass dispersion is genuinely different from the
+  exaggerated demo presets, even though both use the same underlying
+  Snell's-law ray trace.
 
 ## Ideas for extending it further
 

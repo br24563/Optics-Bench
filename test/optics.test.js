@@ -239,6 +239,33 @@ test('cauchyIndex: shorter (blue) wavelengths refract more than longer (red) one
 });
 
 // ---------------------------------------------------------------------
+// Real glass catalog: the Sellmeier equation, matched against published
+// Schott catalog index/Abbe-number values (not just internal consistency).
+// ---------------------------------------------------------------------
+
+test('sellmeierIndex: N-BK7 and N-SF11 match their published d-line index to 4 decimal places', () => {
+  approx(Optics.sellmeierIndex(Optics.SELLMEIER_GLASSES['n-bk7'], 587.6), 1.5168, 1e-4);
+  approx(Optics.sellmeierIndex(Optics.SELLMEIER_GLASSES['n-sf11'], 587.6), 1.7847, 1e-4);
+});
+
+test('abbeNumber: N-BK7 (a crown) and N-SF11 (a flint) match their published Abbe numbers', () => {
+  approx(Optics.abbeNumber('n-bk7'), 64.2, 0.2);
+  approx(Optics.abbeNumber('n-sf11'), 25.7, 0.2);
+  assert.ok(Optics.abbeNumber('n-bk7') > Optics.abbeNumber('n-sf11'), 'a crown glass must have a higher Abbe number (less dispersive) than a flint');
+});
+
+test('glassIndexAt: dispatches correctly across the real catalog, demo presets, and custom coefficients', () => {
+  approx(Optics.glassIndexAt('n-bk7', 550), Optics.sellmeierIndex(Optics.SELLMEIER_GLASSES['n-bk7'], 550), 1e-9);
+  approx(Optics.glassIndexAt('crown', 550), Optics.cauchyIndex(Optics.GLASS_PRESETS.crown.A, Optics.GLASS_PRESETS.crown.B, 550), 1e-9);
+  approx(Optics.glassIndexAt('custom', 550, 1.6, 0.01), Optics.cauchyIndex(1.6, 0.01, 550), 1e-9);
+});
+
+test('lensIndexAt/prismIndexAt: route through glassIndexAt for a real-catalog glass', () => {
+  approx(Optics.lensIndexAt({ glass: 'n-bk7', customA: null, customB: null }, 587.6), 1.5168, 1e-4);
+  approx(Optics.prismIndexAt({ glass: 'n-sf11', customA: null, customB: null }, 587.6), 1.7847, 1e-4);
+});
+
+// ---------------------------------------------------------------------
 // Image formation: the thin-lens equation, 1/do + 1/di = 1/f, m = -di/do
 // ---------------------------------------------------------------------
 
@@ -419,6 +446,111 @@ test('computeSpotDiagram: a finite-conjugate (point-source) spot is the same ord
   assert.ok(parallelSpot && pointSpot);
   const ratio = pointSpot.rmsRadius / parallelSpot.rmsRadius;
   assert.ok(ratio > 0.2 && ratio < 5, `expected the same order of magnitude, got ratio ${ratio}`);
+});
+
+// ---------------------------------------------------------------------
+// Ray fan / longitudinal spherical aberration (LSA) data, the shared
+// per-ray dataset behind computeSpotDiagram, the ray-fan plot, and the
+// LSA plot.
+// ---------------------------------------------------------------------
+
+test('traceAberrationFan: matches computeSpotDiagram\'s RMS exactly (same underlying trace)', () => {
+  const lens = {
+    model: 'realistic', center: { x: 0, y: 0 }, angle: 0, height: 100,
+    glass: 'crown', customA: null, customB: null, r1: 800, r2: -800, thickness: 20,
+  };
+  const source = { mode: 'parallel', angle: 0, wavelength: 550 };
+  const fan = Optics.traceAberrationFan(lens, source, 41);
+  const spot = Optics.computeSpotDiagram(lens, source, 41);
+
+  const heights = fan.samples.map((s) => s.transverseAberration);
+  const rms = Math.sqrt(heights.reduce((a, h) => a + h * h, 0) / heights.length);
+  approx(rms, spot.rmsRadius, 1e-9);
+});
+
+test('traceAberrationFan: the on-axis sample has zero transverse and longitudinal aberration, and LSA is finite everywhere', () => {
+  const lens = {
+    model: 'realistic', center: { x: 0, y: 0 }, angle: 0, height: 100,
+    glass: 'crown', customA: null, customB: null, r1: 800, r2: -800, thickness: 20,
+  };
+  const fan = Optics.traceAberrationFan(lens, { mode: 'parallel', angle: 0, wavelength: 550 }, 21);
+
+  assert.ok(fan.samples.every((s) => Number.isFinite(s.longitudinalAberration)), 'LSA must never be NaN/Infinity, even for the exact on-axis ray');
+  const center = fan.samples.find((s) => s.pupilFraction === 0);
+  approx(center.transverseAberration, 0, 1e-9);
+  assert.equal(center.longitudinalAberration, 0);
+});
+
+test('traceAberrationFan: marginal rays focus short of the paraxial focus (negative LSA), monotonically with pupil height', () => {
+  const lens = {
+    model: 'realistic', center: { x: 0, y: 0 }, angle: 0, height: 100,
+    glass: 'crown', customA: null, customB: null, r1: 800, r2: -800, thickness: 20,
+  };
+  const fan = Optics.traceAberrationFan(lens, { mode: 'parallel', angle: 0, wavelength: 550 }, 21);
+  const positiveHalf = fan.samples.filter((s) => s.pupilFraction >= 0);
+
+  assert.ok(positiveHalf[positiveHalf.length - 1].longitudinalAberration < 0, 'the marginal ray of a converging lens should focus short of paraxial focus');
+  for (let i = 1; i < positiveHalf.length; i++) {
+    assert.ok(
+      positiveHalf[i].longitudinalAberration <= positiveHalf[i - 1].longitudinalAberration + 1e-9,
+      'LSA should get monotonically more negative from the center of the aperture to the edge'
+    );
+  }
+});
+
+// ---------------------------------------------------------------------
+// Third-order (Seidel) spherical aberration: an independent paraxial-trace
+// calculation (not derived from the exact ray tracer) that must converge
+// to the exact ray-traced transverse aberration as the aperture shrinks
+// toward the paraxial regime -- the classic validation of 3rd-order
+// aberration theory against real ray tracing.
+// ---------------------------------------------------------------------
+
+test('computeSeidelSpherical: converges to the exact ray-traced transverse aberration as the aperture shrinks', () => {
+  const y0 = 2; // small -- deep in the paraxial regime
+  const margin = 0.92;
+  const lens = {
+    model: 'realistic', center: { x: 0, y: 0 }, angle: 0, height: (y0 / margin) * 2, thickness: 30,
+    glass: 'n-bk7', customA: null, customB: null, r1: 150, r2: -150,
+  };
+  const source = { mode: 'parallel', angle: 0, wavelength: 550 };
+
+  const seidel = Optics.computeSeidelSpherical(lens, source);
+  const fan = Optics.traceAberrationFan(lens, source, 3);
+  const exact = fan.samples[fan.samples.length - 1].transverseAberration;
+
+  assert.ok(seidel);
+  approx(seidel.predictedTransverseAberration, exact, Math.abs(exact) * 0.01, 'expected agreement to within 1% at a small (near-paraxial) aperture');
+});
+
+test('computeSeidelSpherical: the 3rd-order prediction increasingly diverges from the exact trace as the aperture grows (higher-order aberration)', () => {
+  const margin = 0.92;
+  const makeLens = (y0) => ({
+    model: 'realistic', center: { x: 0, y: 0 }, angle: 0, height: (y0 / margin) * 2, thickness: 30,
+    glass: 'n-bk7', customA: null, customB: null, r1: 150, r2: -150,
+  });
+  const source = { mode: 'parallel', angle: 0, wavelength: 550 };
+
+  function ratioAt(y0) {
+    const lens = makeLens(y0);
+    const seidel = Optics.computeSeidelSpherical(lens, source);
+    const fan = Optics.traceAberrationFan(lens, source, 3);
+    const exact = fan.samples[fan.samples.length - 1].transverseAberration;
+    return seidel.predictedTransverseAberration / exact;
+  }
+
+  const errorSmall = Math.abs(1 - ratioAt(2));
+  const errorLarge = Math.abs(1 - ratioAt(20));
+  assert.ok(errorLarge > errorSmall, '3rd-order theory should fit worse at a larger, more strongly-aberrated aperture');
+});
+
+test('computeSeidelSpherical: undefined for a point source or an ideal lens (the coefficient depends on the conjugate / needs real surfaces)', () => {
+  const lens = {
+    model: 'realistic', center: { x: 0, y: 0 }, angle: 0, height: 20, thickness: 30,
+    glass: 'n-bk7', customA: null, customB: null, r1: 150, r2: -150,
+  };
+  assert.equal(Optics.computeSeidelSpherical(lens, { mode: 'point', position: { x: -500, y: 0 }, wavelength: 550 }), null);
+  assert.equal(Optics.computeSeidelSpherical({ model: 'ideal', focalLength: 100 }, { mode: 'parallel', wavelength: 550 }), null);
 });
 
 test('traceRay: a ray through an ideal lens bends toward the focal point and terminates within the viewport', () => {

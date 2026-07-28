@@ -194,8 +194,8 @@ const GLASS_PRESETS = {
   // moderately exaggerated from real glass data so the rainbow is actually
   // visible; the wavelength-dependence itself (Cauchy's equation) is real,
   // only the strength of the effect is tuned up for visibility.
-  crown: { label: 'Crown glass (BK7-like), n\u2248 1.52', A: 1.5046, B: 0.0180 },
-  flint: { label: 'Flint glass, n\u2248 1.62', A: 1.6034, B: 0.0500 },
+  crown: { label: 'Crown glass (BK7-like, exaggerated), n\u2248 1.52', A: 1.5046, B: 0.0180 },
+  flint: { label: 'Flint glass (exaggerated), n\u2248 1.62', A: 1.6034, B: 0.0500 },
 };
 
 /**
@@ -208,6 +208,81 @@ const GLASS_PRESETS = {
 function cauchyIndex(A, B, wavelengthNm) {
   const lambdaUm = wavelengthNm / 1000;
   return A + B / (lambdaUm * lambdaUm);
+}
+
+// Real optical glass catalogs (Schott, Ohara, ...) publish dispersion as a
+// three-term Sellmeier equation (Sellmeier, 1871):
+//   n(lambda)^2 = 1 + B1*L2/(L2-C1) + B2*L2/(L2-C2) + B3*L2/(L2-C3)
+// where L2 = lambda^2 (lambda in micrometers). Coefficients below are the
+// standard published Schott catalog values (matched against each glass's
+// known n_d to 5 significant figures).
+const SELLMEIER_GLASSES = {
+  'n-bk7': {
+    label: 'N-BK7 (Schott), n_d = 1.517, V_d = 64.2',
+    B1: 1.03961212, B2: 0.231792344, B3: 1.01046945,
+    C1: 0.00600069867, C2: 0.0200179144, C3: 103.560653,
+  },
+  'n-bak4': {
+    label: 'N-BAK4 (Schott), n_d = 1.569, V_d = 55.9',
+    B1: 1.28834642, B2: 0.132817724, B3: 0.945395373,
+    C1: 0.00779980626, C2: 0.0315631177, C3: 105.965875,
+  },
+  'n-sf11': {
+    label: 'N-SF11 (Schott), n_d = 1.785, V_d = 25.7',
+    B1: 1.73759695, B2: 0.313747346, B3: 1.89878101,
+    C1: 0.013188707, C2: 0.0623068142, C3: 155.23629,
+  },
+  'n-sf6': {
+    label: 'N-SF6 (Schott), n_d = 1.805, V_d = 25.4',
+    B1: 1.77931763, B2: 0.338149866, B3: 2.08734474,
+    C1: 0.0133714182, C2: 0.0617533621, C3: 174.01759,
+  },
+  'fused-silica': {
+    label: 'Fused silica, n_d = 1.458, V_d = 67.8',
+    B1: 0.696166300, B2: 0.407942600, B3: 0.897479400,
+    C1: 0.00467914826, C2: 0.0135120631, C3: 97.9340025,
+  },
+};
+
+// The Sellmeier dispersion equation used by real optical glass catalogs.
+function sellmeierIndex(glass, wavelengthNm) {
+  const lambdaUm = wavelengthNm / 1000;
+  const l2 = lambdaUm * lambdaUm;
+  const n2 =
+    1 +
+    (glass.B1 * l2) / (l2 - glass.C1) +
+    (glass.B2 * l2) / (l2 - glass.C2) +
+    (glass.B3 * l2) / (l2 - glass.C3);
+  return Math.sqrt(n2);
+}
+
+// Dispatches to the right dispersion model for a glass key: the real
+// Sellmeier catalog, the exaggerated Cauchy demo presets, or user-entered
+// custom Cauchy coefficients (customA/customB, used only for 'custom').
+function glassIndexAt(glassKey, wavelengthNm, customA, customB) {
+  if (SELLMEIER_GLASSES[glassKey]) return sellmeierIndex(SELLMEIER_GLASSES[glassKey], wavelengthNm);
+  if (glassKey === 'custom') return cauchyIndex(customA, customB, wavelengthNm);
+  const preset = GLASS_PRESETS[glassKey] || GLASS_PRESETS.crown;
+  return cauchyIndex(preset.A, preset.B, wavelengthNm);
+}
+
+// Display label for a glass key, checking both catalogs.
+function glassLabel(glassKey) {
+  if (SELLMEIER_GLASSES[glassKey]) return SELLMEIER_GLASSES[glassKey].label;
+  if (glassKey === 'custom') return 'Custom glass';
+  return (GLASS_PRESETS[glassKey] || GLASS_PRESETS.crown).label;
+}
+
+// Abbe number (V_d), the standard glass-catalog figure of merit for
+// dispersion: V_d = (n_d - 1) / (n_F - n_C), using the Fraunhofer d/F/C
+// lines (587.6/486.1/656.3nm). Higher V_d = less dispersive (crown-like);
+// lower V_d = more dispersive (flint-like).
+function abbeNumber(glassKey, customA, customB) {
+  const nd = glassIndexAt(glassKey, 587.6, customA, customB);
+  const nF = glassIndexAt(glassKey, 486.1, customA, customB);
+  const nC = glassIndexAt(glassKey, 656.3, customA, customB);
+  const denom = nF - nC;
+  return Math.abs(denom) < 1e-9 ? Infinity : (nd - 1) / denom;
 }
 
 // Rough visible-spectrum wavelength -> RGB, for coloring dispersed rays.
@@ -261,10 +336,7 @@ function buildLensSurfaces(lens) {
 }
 
 function lensIndexAt(lens, wavelengthNm) {
-  const preset = GLASS_PRESETS[lens.glass] || GLASS_PRESETS.crown;
-  const A = lens.customA != null ? lens.customA : preset.A;
-  const B = lens.customB != null ? lens.customB : preset.B;
-  return cauchyIndex(A, B, wavelengthNm);
+  return glassIndexAt(lens.glass, wavelengthNm, lens.customA, lens.customB);
 }
 
 /**
@@ -391,7 +463,33 @@ function airyDiskRadius(wavelengthNm, workingDistance, apertureDiameter) {
 // Only valid when the beam travels along the lens's own optical axis (the
 // common on-axis case this bench is built around) and forms a real image;
 // returns null otherwise rather than reporting a misleading number.
-function computeSpotDiagram(lens, source, sampleCount) {
+// Axial distance (from `center`, along `axis`) at which a ray through
+// `point` heading `dir` crosses the tangential coordinate 0 -- i.e. where
+// it crosses the optical axis. Used both to locate the paraxial focus (a
+// near-axis ray's own crossing) and, per marginal ray, its longitudinal
+// aberration relative to that paraxial focus.
+function axialCrossingDistance(point, dir, center, axis, tangent) {
+  const slope = dot(dir, tangent);
+  if (Math.abs(slope) < 1e-12) return Infinity;
+  const tangentialAt = dot(sub(point, center), tangent);
+  const s = -tangentialAt / slope;
+  return dot(sub(point, center), axis) + s * dot(dir, axis);
+}
+
+// Traces a fan of rays across the full clear aperture of a realistic lens
+// and returns, for each, its transverse aberration at the paraxial image
+// plane (the ray-fan/spot-diagram quantity) and its own longitudinal
+// focus shift from the paraxial focus (the LSA quantity) -- the shared
+// data behind `computeSpotDiagram`, the ray-fan plot, and the LSA plot.
+//
+// The paraxial image plane is found by tracing an actual near-axis ray
+// through the *real* thick-lens surfaces (see the note on `computeSpotDiagram`
+// below), not by assuming the thin-lens focal length applies at the
+// lens's geometric center.
+//
+// Only valid when the beam travels along the lens's own optical axis and
+// forms a real image; returns null otherwise.
+function traceAberrationFan(lens, source, sampleCount) {
   if (lens.model !== 'realistic') return null;
   sampleCount = sampleCount || 21;
 
@@ -431,24 +529,19 @@ function computeSpotDiagram(lens, source, sampleCount) {
     }
     const hit = findRealisticLensHit(lens, origin, dir);
     if (!hit) return null;
-    const result = propagateRealisticLens(lens, origin, dir, hit, wavelengthNm);
-    return result;
+    return propagateRealisticLens(lens, origin, dir, hit, wavelengthNm);
   }
 
   const paraxialOffset = Math.min(0.05, halfHeight * 0.01) || 0.05;
   const paraxial = traceOffset(paraxialOffset);
   if (!paraxial) return null;
-  const paraxialSlope = dot(paraxial.exitDir, tangent);
-  if (Math.abs(paraxialSlope) < 1e-12) return null; // no optical power
-  const paraxialTangentialAtExit = dot(sub(paraxial.exitPoint, lens.center), tangent);
-  const sToAxis = -paraxialTangentialAtExit / paraxialSlope;
-  const planeDistance = dot(sub(paraxial.exitPoint, lens.center), axis) + sToAxis * dot(paraxial.exitDir, axis);
+  const planeDistance = axialCrossingDistance(paraxial.exitPoint, paraxial.exitDir, lens.center, axis, tangent);
   if (!isFinite(planeDistance) || planeDistance <= 0) return null;
 
   const margin = 0.92; // stay slightly inside the physical aperture edge
-  const heights = [];
+  const samples = [];
   for (let i = 0; i < sampleCount; i++) {
-    const t = sampleCount === 1 ? 0 : (i / (sampleCount - 1)) * 2 - 1; // -1..1
+    const t = sampleCount === 1 ? 0 : (i / (sampleCount - 1)) * 2 - 1; // -1..1 pupil fraction
     const offset = t * halfHeight * margin;
     const result = traceOffset(offset);
     if (!result) continue;
@@ -458,16 +551,114 @@ function computeSpotDiagram(lens, source, sampleCount) {
     const s = (planeDistance - dot(sub(result.exitPoint, lens.center), axis)) / denom;
     if (s < 0) continue;
     const landing = add(result.exitPoint, scale(result.exitDir, s));
-    heights.push(dot(sub(landing, lens.center), tangent));
+    const transverseAberration = dot(sub(landing, lens.center), tangent);
+    // A ray with essentially zero transverse slope (the exact on-axis
+    // sample) never crosses the axis at a well-defined finite point -- it
+    // IS the axis. Its longitudinal aberration is trivially 0 by definition
+    // rather than the Infinity - Infinity = NaN a literal crossing solve
+    // would produce.
+    const rawCrossing = axialCrossingDistance(result.exitPoint, result.exitDir, lens.center, axis, tangent);
+    const longitudinalAberration = isFinite(rawCrossing) ? rawCrossing - planeDistance : 0;
+    samples.push({ pupilFraction: t, apertureHeight: offset, transverseAberration, longitudinalAberration });
   }
 
-  if (heights.length < 2) return null;
+  if (samples.length < 2) return null;
+  return { samples, planeDistance };
+}
+
+/**
+ * Real-ray spot diagram for a realistic (Snell's-law) lens: traces a fan of
+ * rays spanning the clear aperture through the *actual* spherical surfaces,
+ * then finds where each one crosses the paraxial image plane. Their spread
+ * there is genuine transverse spherical aberration -- rays through the edge
+ * of the aperture focus short of paraxial rays through the center, exactly
+ * as in a real lens -- and is reported as an RMS spot radius, directly
+ * comparable to `airyDiskRadius` above to see whether a configuration is
+ * diffraction-limited or aberration-limited.
+ *
+ * The paraxial image plane is found by tracing an actual near-axis ray
+ * through the *real* thick-lens surfaces, rather than by placing it at the
+ * thin-lens focal length measured from the lens's geometric center. For a
+ * lens with non-negligible thickness those two disagree -- the true
+ * paraxial focus sits at a principal-plane-shifted position, not at
+ * `lens.center + f`. Using the thin-lens estimate as the reference plane
+ * would inject a spurious defocus that scales *linearly* with aperture
+ * height and swamps the much smaller (cubic-in-height) spherical
+ * aberration this function exists to measure.
+ *
+ * Only valid when the beam travels along the lens's own optical axis (the
+ * common on-axis case this bench is built around) and forms a real image;
+ * returns null otherwise rather than reporting a misleading number.
+ */
+function computeSpotDiagram(lens, source, sampleCount) {
+  const fan = traceAberrationFan(lens, source, sampleCount);
+  if (!fan) return null;
+  const heights = fan.samples.map((s) => s.transverseAberration);
   // Deviation from the *paraxial* image point (tangential coordinate 0 at
   // this plane, by construction), not from the sampled rays' own mean --
   // the paraxial ray defines where a perfect image would form.
   const rmsRadius = Math.sqrt(heights.reduce((a, h) => a + h * h, 0) / heights.length);
   const peakRadius = Math.max(...heights.map((h) => Math.abs(h)));
   return { rmsRadius, peakRadius, sampleCount: heights.length };
+}
+
+/**
+ * Third-order (Seidel) spherical aberration coefficient for a realistic
+ * lens under collimated (infinite-conjugate) illumination, via a genuine
+ * paraxial marginal-ray trace and the classic Seidel sum (Welford,
+ * "Aberrations of Optical Systems", 2nd ed., Ch. 9; Kingslake & Johnson,
+ * "Lens Design Fundamentals", 2nd ed., Ch. 5):
+ *   S_I = Σ_surfaces A² y Δ(u/n),   A = n(u + yc)
+ * with the predicted transverse ray aberration of the marginal ray at the
+ * paraxial focus, ε_y' = -S_I / (2 n' u').
+ *
+ * This is an independent calculation from the exact ray trace used
+ * elsewhere in the bench (a true small-angle paraxial trace, not a
+ * small-height limit of the exact Snell's-law trace) -- the two agree to
+ * a fraction of a percent for a small aperture and diverge at the full
+ * aperture exactly where third-order theory is expected to break down,
+ * which is itself a meaningful indicator of how far a configuration sits
+ * from the paraxial regime.
+ *
+ * Only defined for collimated input; returns null for a point source,
+ * since "the" Seidel coefficient of a lens depends on which conjugate
+ * it's evaluated at.
+ * @param {object} lens
+ * @param {{mode:string, wavelength:number}} source
+ * @returns {{SI:number, marginalRayHeight:number, predictedTransverseAberration:number}|null}
+ */
+function computeSeidelSpherical(lens, source) {
+  if (lens.model !== 'realistic' || source.mode !== 'parallel') return null;
+  const wavelengthNm = source.wavelength || 550;
+  const n = lensIndexAt(lens, wavelengthNm);
+  const r1 = clampLensRadius(lens.r1);
+  const r2 = clampLensRadius(lens.r2);
+  const c1 = 1 / r1, c2 = 1 / r2;
+  const y0 = lens.height / 2;
+  if (!(y0 > 0)) return null;
+
+  let sumSI = 0;
+
+  // Surface 1: air (n=1) -> glass (n)
+  const nBefore1 = 1, uBefore1 = 0, y1 = y0;
+  const A1 = nBefore1 * (uBefore1 + y1 * c1);
+  const uAfter1 = (nBefore1 * uBefore1 - y1 * c1 * (n - nBefore1)) / n;
+  sumSI += A1 * A1 * y1 * (uAfter1 / n - uBefore1 / nBefore1);
+
+  // Transfer across the lens thickness
+  const y2 = y1 + lens.thickness * uAfter1;
+
+  // Surface 2: glass (n) -> air (n=1)
+  const nBefore2 = n, uBefore2 = uAfter1;
+  const A2 = nBefore2 * (uBefore2 + y2 * c2);
+  const uAfter2 = (nBefore2 * uBefore2 - y2 * c2 * (1 - nBefore2)) / 1;
+  sumSI += A2 * A2 * y2 * (uAfter2 / 1 - uBefore2 / nBefore2);
+
+  const SI = sumSI;
+  const finalU = uAfter2;
+  if (Math.abs(finalU) < 1e-12) return null;
+  const predictedTransverseAberration = -SI / (2 * finalU);
+  return { SI, marginalRayHeight: y0, predictedTransverseAberration };
 }
 
 // ---------- prism geometry ----------
@@ -519,10 +710,7 @@ function findPrismHit(prism, origin, dir) {
 }
 
 function prismIndexAt(prism, wavelengthNm) {
-  const preset = GLASS_PRESETS[prism.glass] || GLASS_PRESETS.crown;
-  const A = prism.customA != null ? prism.customA : preset.A;
-  const B = prism.customB != null ? prism.customB : preset.B;
-  return cauchyIndex(A, B, wavelengthNm);
+  return glassIndexAt(prism.glass, wavelengthNm, prism.customA, prism.customB);
 }
 
 function propagatePrism(prism, origin, dir, hit, wavelengthNm) {
@@ -697,8 +885,9 @@ window.Optics = {
   intersectSegment, intersectCircle, intersectSphereHemisphere, intersectBounds,
   reflect, refractVector, refractThinLens, applyMirrorCurvature,
   GLASS_PRESETS, cauchyIndex, wavelengthToRGB,
+  SELLMEIER_GLASSES, sellmeierIndex, glassIndexAt, glassLabel, abbeNumber,
   buildLensSurfaces, lensIndexAt, effectiveFocalLength,
   buildPrismFaces, prismIndexAt,
   findElementHit, propagateElement, traceRay,
-  computeImageInfo, airyDiskRadius, computeSpotDiagram,
+  computeImageInfo, airyDiskRadius, computeSpotDiagram, traceAberrationFan, computeSeidelSpherical,
 };
